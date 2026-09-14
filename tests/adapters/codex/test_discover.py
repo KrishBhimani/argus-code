@@ -56,7 +56,7 @@ def jsonl(lines: list[dict]) -> str:
 def _write(root: Path, rel: str, lines: list[dict]) -> Path:
     p = root / rel
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(jsonl(lines), encoding="utf-8")
+    p.write_text(jsonl(lines), encoding="utf-8", newline="\n")
     return p
 
 

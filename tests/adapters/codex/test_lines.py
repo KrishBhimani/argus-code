@@ -58,7 +58,7 @@ def jsonl(lines: list[dict]) -> str:
 
 def test_envelope_lines_carry_offset_timestamp_kind(tmp_path):
     p = tmp_path / "r.jsonl"
-    p.write_text(jsonl([meta(), ctx(), tc(usage(10), usage(10, out=5))]), encoding="utf-8")
+    p.write_text(jsonl([meta(), ctx(), tc(usage(10), usage(10, out=5))]), encoding="utf-8", newline="\n")
     r = read_lines(p, 0, "envelope")
     assert [l.kind for l in r.lines] == ["session_meta", "turn_context", "event_msg"]
     assert r.lines[0].offset == 0 and r.lines[1].offset == len(json.dumps(meta())) + 1
@@ -68,7 +68,7 @@ def test_envelope_lines_carry_offset_timestamp_kind(tmp_path):
 
 def test_partial_trailing_line_is_held_back(tmp_path):
     p = tmp_path / "r.jsonl"
-    p.write_text(jsonl([meta()]) + '{"timestamp":"x","type":"turn_con', encoding="utf-8")
+    p.write_text(jsonl([meta()]) + '{"timestamp":"x","type":"turn_con', encoding="utf-8", newline="\n")
     r = read_lines(p, 0, "envelope")
     assert len(r.lines) == 1
     assert r.new_offset == len(jsonl([meta()]).encode())
@@ -76,7 +76,7 @@ def test_partial_trailing_line_is_held_back(tmp_path):
 
 def test_reads_only_after_offset(tmp_path):
     p = tmp_path / "r.jsonl"
-    p.write_text(jsonl([meta(), ctx()]), encoding="utf-8")
+    p.write_text(jsonl([meta(), ctx()]), encoding="utf-8", newline="\n")
     off = len(jsonl([meta()]).encode())
     r = read_lines(p, off, "envelope")
     assert [l.kind for l in r.lines] == ["turn_context"] and r.lines[0].offset == off
@@ -84,14 +84,14 @@ def test_reads_only_after_offset(tmp_path):
 
 def test_no_new_bytes(tmp_path):
     p = tmp_path / "r.jsonl"
-    p.write_text(jsonl([meta()]), encoding="utf-8")
+    p.write_text(jsonl([meta()]), encoding="utf-8", newline="\n")
     r = read_lines(p, p.stat().st_size, "envelope")
     assert r.lines == [] and r.new_offset == p.stat().st_size
 
 
 def test_malformed_line_becomes_parse_error(tmp_path):
     p = tmp_path / "r.jsonl"
-    p.write_text(jsonl([meta()]) + "{nope}\n" + jsonl([ctx()]), encoding="utf-8")
+    p.write_text(jsonl([meta()]) + "{nope}\n" + jsonl([ctx()]), encoding="utf-8", newline="\n")
     r = read_lines(p, 0, "envelope")
     assert len(r.lines) == 2 and len(r.parse_errors) == 1
     assert r.parse_errors[0].byte_offset == len(jsonl([meta()]).encode())
@@ -114,7 +114,7 @@ def test_legacy_format_wraps_bare_items(tmp_path):
 
 def test_ordinal_is_carried(tmp_path):
     p = tmp_path / "r.jsonl"
-    p.write_text(jsonl([meta(), env("turn_context", {"model": "gpt-5.5"}, ordinal=7)]), encoding="utf-8")
+    p.write_text(jsonl([meta(), env("turn_context", {"model": "gpt-5.5"}, ordinal=7)]), encoding="utf-8", newline="\n")
     r = read_lines(p, 0, "envelope")
     assert r.lines[1].ordinal == 7 and r.lines[0].ordinal is None
 
