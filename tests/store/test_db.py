@@ -5,7 +5,7 @@ import sqlite3
 
 import pytest
 
-from argus.store.db import open_db
+from argus.store.db import SCHEMA_VERSION, open_db
 
 
 def test_open_db_read_only_rejects_writes(tmp_path):
@@ -49,6 +49,17 @@ def test_creates_schema_on_first_open(db_path):
             "transcript_segments",
         }:
             assert tbl in names
+    finally:
+        db.close()
+
+
+def test_migration_007_adds_prompts_session_id(db_path):
+    db = open_db(db_path)
+    try:
+        cols = {r[1] for r in db.execute("PRAGMA table_info(prompts)").fetchall()}
+        assert "session_id" in cols
+        v = db.execute("SELECT value FROM app_meta WHERE key='schema_version'").fetchone()
+        assert int(v["value"]) >= 7
     finally:
         db.close()
 
@@ -106,7 +117,8 @@ def test_migration_006_adds_tool_use_id_column(db):
     cols = {r["name"] for r in db.execute("PRAGMA table_info(transcript_segments)")}
     assert "tool_use_id" in cols
     row = db.execute("SELECT value FROM app_meta WHERE key = 'schema_version'").fetchone()
-    assert int(row["value"]) == 6
+    # A fresh DB always lands on the latest version, whatever that is today.
+    assert int(row["value"]) == SCHEMA_VERSION
 
 
 def test_migration_006_index_exists(db):
@@ -135,13 +147,14 @@ def test_open_db_recovers_from_half_applied_migration(db_path):
     )
     conn.close()
 
-    # Re-open must not raise, must finish at v6, and must heal the missing index.
+    # Re-open must not raise, must finish at the latest version (re-applying
+    # 006 and everything after it), and must heal the missing index.
     conn = open_db(db_path)
     try:
         ver = conn.execute(
             "SELECT value FROM app_meta WHERE key = 'schema_version'"
         ).fetchone()
-        assert int(ver["value"]) == 6
+        assert int(ver["value"]) == SCHEMA_VERSION
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(transcript_segments)")}
         assert "tool_use_id" in cols
         idx = {

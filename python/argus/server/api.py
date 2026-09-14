@@ -556,7 +556,7 @@ def build_api(repo: Repository, deps: ApiDeps) -> APIRouter:
                         "snippet": r.get("snippet") or r["display"],
                         "pasted_chars": r["pasted_chars"],
                         "session_id": repo.link_prompt_to_session(
-                            r["project_path"], r["timestamp_ms"]
+                            r["project_path"], r["timestamp_ms"], r.get("session_id")
                         ),
                     }
                 )

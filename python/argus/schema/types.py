@@ -126,6 +126,9 @@ class Prompt(BaseModel):
     display: str
     pasted_chars: int = 0
     is_slash: int = 0  # 0 | 1
+    # Exact link when the source records it (Codex history.jsonl carries the
+    # thread id); None for sources that only give project + timestamp.
+    session_id: str | None = None
 
 
 class TranscriptSegment(BaseModel):
