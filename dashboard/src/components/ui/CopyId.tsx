@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { Icon } from './Icon';
 
-/** Short id chip that copies the full value on click (Claude Code session UUID, usable with `claude --resume`). */
-export function CopyId({ value, chars = 8 }: { value: string; chars?: number }) {
+/** Short id chip that copies the bare native session id on click. `hint` is the agent's resume command (see `lib/agents.ts`). */
+export function CopyId({ value, chars = 8, hint }: { value: string; chars?: number; hint?: string }) {
   const [done, setDone] = useState(false);
   const bare = value.includes(':') ? value.slice(value.indexOf(':') + 1) : value;
   const copy = async () => {
@@ -18,7 +18,7 @@ export function CopyId({ value, chars = 8 }: { value: string; chars?: number }) 
     <button
       type="button"
       onClick={copy}
-      title={`Session id ${bare}\nClick to copy (use with: claude --resume ${bare})`}
+      title={`Session id ${bare}\nClick to copy${hint ? ` (use with: ${hint})` : ''}`}
       className={`inline-flex items-center gap-1.5 font-mono text-[11px] px-1.5 h-5 rounded-sm border transition-colors ${done ? 'text-good border-good/40 bg-good/10' : 'text-ink-1 bg-bg-3 border-transparent hover:border-line-2 hover:text-ink-0'}`}
     >
       {done ? <Icon name="check" size={10} /> : null}
