@@ -79,6 +79,12 @@ def test_claude_code_is_auto_registered():
     assert "claude_code" in registry.registered_adapter_names()
 
 
+def test_codex_is_auto_registered():
+    import argus.adapters  # noqa: F401
+
+    assert "codex" in registry.registered_adapter_names()
+
+
 def test_native_session_id_defaults_to_stem():
     """Protocol default: the native id is the file stem (Claude Code's layout)."""
 

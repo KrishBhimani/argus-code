@@ -1,1 +1,2 @@
-"""Codex CLI adapter package (registration is wired in adapter.py)."""
+"""Codex CLI adapter -- self-registers on import."""
+from . import adapter  # noqa: F401

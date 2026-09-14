@@ -20,16 +20,22 @@ from pathlib import Path
 import pytest
 
 from argus.adapters.claude_code import adapter as cc_adapter
+from argus.adapters.codex import adapter as codex_adapter
 from argus.core.runtime import CoreRuntime, NoAdaptersError
 from argus.daemon import service
 
 
 @pytest.fixture
 def fake_home(tmp_path: Path, monkeypatch):
-    """Point the Claude Code adapter at a home that has no .claude/ yet."""
+    """Point every adapter at a home that has no agent data yet.
+
+    Both roots must be faked: a developer's real ~/.codex/sessions would
+    otherwise make "no adapters present" untestable on their machine.
+    """
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setattr(cc_adapter, "_default_root", lambda: home / ".claude")
+    monkeypatch.setattr(codex_adapter, "codex_root", lambda: home / ".codex")
     return home
 
 
