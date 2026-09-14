@@ -263,11 +263,12 @@ def _backfill_missing_derived_data(
     if agent_fix_pending:
         for c in repo.sessions_with_untyped_agent_calls(200):
             ids.add(c["id"].split("/", 1)[0])
-    # session_id "claude_code:<basename>" → file path lookup.
+    # session_id "<agent>:<native id>" → file path lookup, via the adapter hook
+    # (never the file stem: Codex rollouts are named rollout-<ts>-<uuid>.jsonl).
     file_by_basename: dict[str, tuple[Adapter, Path]] = {}
     for a in adapters:
         for f in a.discover_session_files():
-            file_by_basename[f.stem] = (a, f)
+            file_by_basename[a.native_session_id(f)] = (a, f)
 
     # One-shot: turns ingested before extract_turns learned to take
     # output_tokens from a message's final streamed line hold placeholder

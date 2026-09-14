@@ -107,3 +107,13 @@ class Adapter(Protocol):
     def normalize_model_name(self, raw: str) -> str:
         """Map raw model identifier to the form the pricing table keys on."""
         return raw
+
+    def native_session_id(self, path: Path) -> str:
+        """The agent-native session id for a top-level session file.
+
+        Argus stores sessions as ``<agent>:<native_session_id>``. Backfills
+        map a stored id back to its file with this hook, so an adapter whose
+        file names are not the bare id (Codex: ``rollout-<ts>-<uuid>.jsonl``)
+        can still be re-read.
+        """
+        return path.stem
