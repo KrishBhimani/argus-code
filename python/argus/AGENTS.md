@@ -4,8 +4,8 @@ Parent: repo-root `AGENTS.md`. Read it first for the workflow and global rules.
 
 ## Purpose
 
-The `argus` package: ingest Claude Code transcripts, store them in SQLite, serve
-the dashboard, and provide the `argus` CLI. Runs directly from source
+The `argus` package: ingest Claude Code and Codex CLI transcripts, store them in
+SQLite, serve the dashboard, and provide the `argus` CLI. Runs directly from source
 (`uv run argus start`) — no build step. Entry point: `argus = "argus.cli:app"`.
 
 ## Ownership
@@ -29,7 +29,8 @@ Delegated subtrees (see their own AGENTS.md): `store/`, `collector/`, `adapters/
   user-facing command, keep the old name as a `hidden=True` alias and nudge to the
   new one (precedent: `search` → `indexing`). Update help strings, the daemon
   read-only API hint, and dashboard copy together.
-- **A missing `~/.claude` is fatal for `argus start` but not for `argusd`.**
+- **No adapter data (neither `~/.claude` nor `~/.codex/sessions`) is fatal for
+  `argus start` but not for `argusd`.**
   `CoreRuntime.start(require_adapters=True)` (the foreground default) raises
   `NoAdaptersError` — immediate, readable feedback. The daemon
   (`daemon/service.py`) passes `require_adapters=False`, comes up idle with the
@@ -56,5 +57,5 @@ Delegated subtrees (see their own AGENTS.md): `store/`, `collector/`, `adapters/
 
 - `store/AGENTS.md` — SQLite, migrations, repository; data-safety + path normalization.
 - `collector/AGENTS.md` — ingest pipeline and missing-data backfill.
-- `adapters/AGENTS.md` — Claude Code adapter and transcript-segment extraction.
+- `adapters/AGENTS.md` — Claude Code and Codex adapters, transcript-segment extraction.
 - `server/AGENTS.md` — FastAPI routes, static serving, clean shutdown.

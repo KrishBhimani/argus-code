@@ -35,6 +35,11 @@ migrations; `repository.py` is the typed read/write API over SQLite.
   applying its per-run cap.
 - **Upserts are idempotent** (conflict-replace) so re-ingesting a file from a reset
   offset never duplicates or corrupts rows.
+- **`prompts.session_id` (migration 007) is the exact prompt→session link** when
+  the source records it (Codex `history.jsonl`); NULL for Claude's history.
+  `link_prompt_to_session` prefers it and falls back to the project+timestamp
+  heuristic; `resolve_prompt_projects` fills an empty `project_path` from the
+  linked session and is idempotent.
 
 ## Work Guidance
 

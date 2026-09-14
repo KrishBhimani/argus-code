@@ -17,7 +17,13 @@ after a schema/feature upgrade.
   re-calling `ingest_file` alone does nothing for an EOF file.
 - **Sub-agents are walked via the parent.** A parent ingest discovers
   `adapter.sub_session_files_for(parent)` and ingests any that **grew past their
-  offset**. Sub-agent session ids contain `/` (`<parent>/agent-<hex>`).
+  offset**. Sub-agent session ids contain `/` (`<parent>/agent-<hex>` for Claude,
+  `<parent>/<child uuid>` for Codex).
+- **Ids map to files only through `adapter.native_session_id(path)`.** The
+  pipeline's sub-session ids and both backfills (`first_run`, `search_backfill`)
+  use it; never `path.stem` (a Codex rollout is `rollout-<ts>-<uuid>.jsonl`).
+- **The background phase ends with `repo.resolve_prompt_projects()`** so Codex
+  prompts that arrived before their session get their project.
 - **Segments are gated on indexing.** Parent and sub-agent segments are written
   only when `repo.is_search_indexing_enabled()` (see `store/AGENTS.md`). So
   enabling indexing *after* ingest requires re-reading the relevant files.

@@ -144,6 +144,38 @@ log directory:
 - ingesting a real session keeps parse errors below 5% (loose
   conformance check against real-world JSONL drift)
 
+### `tests/adapters/codex/` — Codex CLI adapter
+
+Synthetic rollouts built per file from small factories (`meta`, `ctx`, `tc`,
+`usage`, `fc`, `fco`, `msg`, `jsonl`). Fixtures write with `newline="\n"` because
+byte offsets are asserted.
+
+- `test_model.py` — `openai/` prefix and `-YYYY-MM-DD` suffix stripping; empty → `unknown`.
+- `test_discover.py` — rollout filename parsing (revert `_<rollout>` suffix, `.zst`),
+  `CODEX_HOME`, first-line peek for envelope vs legacy, child/fork detection from
+  `session_meta`, `ThreadIndex` roots-only + lazy child learning, junction escape rejected.
+- `test_lines.py` — offsets, partial-line holdback, legacy raw wrapping, `ordinal`,
+  zstd read-whole (skipped without a decoder) / skipped-once without one.
+- `test_extract_turns.py` — `last_token_usage` mapping, rate-limit dedupe, total
+  differencing fallback, null fields, model from `turn_context` /
+  `thread_settings_applied` / `unknown`, cross-tick state rebuild, legacy zero-token
+  turns, legacy replay-burst skip, paginated ordinal cutoff.
+- `test_extract_tool_calls.py` — attribution to the following turn, MCP namespace
+  prefixing, `spawn_agent.agent_type`, every error signal, trailing calls held back.
+- `test_extract_transcript.py` — prompt sources (plain `user_message`, paginated
+  item; injected `environment_context` and raw user items excluded), reasoning,
+  tool outputs by `call_id`, cap, legacy timestamps.
+- `test_ingest_file.py` — header fields, holdback across ticks, meta-only files,
+  state rebuild without cache, parse errors, legacy child end-to-end.
+- `test_adapter.py` — presence, discovery, sub-sessions, skip rules, containment.
+- `test_history_jsonl.py` — prompts with `session_id`, project healing, truncation.
+- `test_real_root.py` — opt-in, `ARGUS_REAL_CODEX_ROOT`; every real rollout ingests
+  without parse errors.
+
+`tests/collector/test_pipeline_codex.py` runs a Codex parent + child through the real
+pipeline (rollup, Sub-agents tab, tool-call rows, idempotence, backfill by native id,
+prompt-only stub creates no session).
+
 ### `src/collector/`
 
 #### `aggregate.test.ts` — session aggregation (2 tests)
