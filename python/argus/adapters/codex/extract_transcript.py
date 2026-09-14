@@ -77,7 +77,11 @@ def extract_transcript_segments(
         t = p.get("type")
         if line.kind == "event_msg":
             if t == "user_message" and isinstance(p.get("message"), str):
-                add(line, 0, "user", p["message"])
+                # Seen in real v0.45 rollouts: `kind` distinguishes the typed
+                # prompt ("plain") from injected context ("environment_context").
+                kind = p.get("kind")
+                if kind is None or kind == "plain":
+                    add(line, 0, "user", p["message"])
             elif t == "item_completed":
                 add(line, 0, "user", _item_completed_user_text(p.get("item")))
             continue

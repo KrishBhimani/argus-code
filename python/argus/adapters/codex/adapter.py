@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from ..base import AdapterIngestResult
 from ..registry import register
 from .discover import ThreadIndex, _safe_realpath_under, codex_root, is_rollout_path, native_id_for
+from .history_jsonl import ingest_history_file
 from .ingest_file import empty_result, ingest_codex_file
 from .model import canonicalize_codex_model
 from .state import TickState
@@ -58,13 +59,8 @@ class CodexAdapter:
         return [history] if history.exists() else []
 
     def ingest_extra(self, path: Path, repo: "Repository") -> None:
-        if path.name != "history.jsonl":
-            return
-        try:
-            from .history_jsonl import ingest_history_file
-        except ImportError:  # wired in the prompt-history task
-            return
-        ingest_history_file(path, repo)
+        if path.name == "history.jsonl":
+            ingest_history_file(path, repo)
 
     def sub_session_files_for(self, session_file: Path) -> list[Path]:
         return self._index.children_of(session_file)

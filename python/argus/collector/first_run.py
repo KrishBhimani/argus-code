@@ -187,6 +187,9 @@ def run_first_pass_ingest(
                 )
             handle._inc()
         _backfill_missing_derived_data(adapters, repo, table)
+        # Prompts that arrived before their session (Codex writes history.jsonl
+        # before the first token_count) get their project once the session exists.
+        repo.resolve_prompt_projects()
         handle._backfill_done.set()
 
     thread = threading.Thread(

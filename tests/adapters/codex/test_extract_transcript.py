@@ -76,6 +76,17 @@ def test_roles_and_sources(tmp_path):
     assert all(s.timestamp == TS0 for s in segs)
 
 
+def test_user_message_kind_filters_injected_context(tmp_path):
+    """Real v0.45 rollouts tag user_message events with kind=environment_context
+    for injected context; only kind=plain (or no kind) is the typed prompt."""
+    segs = _segs(tmp_path, [
+        meta(),
+        env("event_msg", {"type": "user_message", "kind": "environment_context", "message": "<environment_context>x</environment_context>"}),
+        env("event_msg", {"type": "user_message", "kind": "plain", "message": "typed"}),
+    ])
+    assert [s.text for s in segs] == ["typed"]
+
+
 def test_cap_and_blank_skip(tmp_path):
     segs = _segs(tmp_path, [meta(), msg("assistant", "   "), msg("assistant", "x" * (SEGMENT_CAP_BYTES + 10))])
     assert len(segs) == 1
