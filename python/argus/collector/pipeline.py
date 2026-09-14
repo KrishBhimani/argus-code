@@ -127,7 +127,9 @@ def ingest_file(
 
         for sub in grown:
             subs_changed = True
-            sub_session_id = f"{session_id}/{sub.stem}"
+            # Native id via the adapter, never the stem: a Codex child rollout
+            # is named rollout-<ts>-<uuid>.jsonl but its id is the uuid.
+            sub_session_id = f"{session_id}/{adapter.native_session_id(sub)}"
             sub_from_offset = repo.get_file_offset(str(sub))
             sub_result, sub_new_offset = adapter.ingest_file(sub, sub_from_offset)
 
@@ -179,7 +181,7 @@ def ingest_file(
             for sub in sub_files:
                 if sub in grown:
                     continue
-                stored_sub = repo.get_session(f"{session_id}/{sub.stem}")
+                stored_sub = repo.get_session(f"{session_id}/{adapter.native_session_id(sub)}")
                 if stored_sub is not None:
                     sub_sessions.append(stored_sub)
 
