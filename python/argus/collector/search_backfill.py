@@ -51,13 +51,11 @@ def run_segment_backfill(
         if _state.in_progress:
             return get_search_backfill_status()
 
-    # Build basename → (adapter, file) map for top-level claude_code files.
+    # Build native-id → (adapter, file) map for every adapter's top-level files.
     file_by_basename: dict[str, tuple[Adapter, "object"]] = {}
     for a in adapters:
-        if a.agent != "claude_code":
-            continue
         for f in a.discover_session_files():
-            file_by_basename[f.stem] = (a, f)
+            file_by_basename[a.native_session_id(f)] = (a, f)
 
     candidates = [
         c for c in repo.sessions_missing_segments(1000) if "/" not in c["id"]

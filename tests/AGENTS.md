@@ -27,7 +27,13 @@ this doc is the binding conventions.
 - **Platform/opt-in skips are expected:** POSIX-only signal tests skip on Windows;
   `os.symlink` tests skip without the Windows symlink privilege (the equivalent
   NTFS-junction cases still run); real-environment tests are gated by
-  `ARGUS_REAL_CLAUDE_ROOT`.
+  `ARGUS_REAL_CLAUDE_ROOT` and `ARGUS_REAL_CODEX_ROOT`.
+- **Fixtures that assert byte offsets must write LF.** `Path.write_text` emits
+  CRLF on Windows; pass `newline="\n"` (the Codex tests do) or offsets drift by
+  one per line.
+- **Fake every adapter root when testing "no adapters".** `~/.codex/sessions` on a
+  developer machine is real data; `tests/daemon/test_no_claude_dir.py` patches
+  both `claude_code.adapter._default_root` and `codex.adapter.codex_root`.
 - **Never assert on scheduling luck.** Wait for the exact thing you assert on,
   not a proxy for it, and budget the wait generously — a tight poll is a claim
   about machine speed, not about the code. Two tests broke this and only failed

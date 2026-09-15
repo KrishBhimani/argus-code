@@ -865,3 +865,26 @@ def test_sessions_with_untyped_agent_calls_and_app_meta(repo):
     assert repo.get_app_meta("backfill_agent_subagent_type_v1") is None
     repo.set_app_meta("backfill_agent_subagent_type_v1", "1")
     assert repo.get_app_meta("backfill_agent_subagent_type_v1") == "1"
+
+
+def test_resolve_prompt_projects_fills_empty_project_from_session(repo):
+    from argus.schema.types import Prompt
+    from tests.conftest import session_factory
+
+    repo.insert_prompts([Prompt(timestamp_ms=1, project_path="", display="hi", session_id="codex:t1")])
+    assert repo.resolve_prompt_projects() == 0  # session not there yet
+    repo.upsert_session(session_factory("codex:t1", "2026-09-01T10:00:00Z", agent="codex"))
+    assert repo.resolve_prompt_projects() == 1
+    row = repo.db.execute("SELECT project_path, session_id FROM prompts").fetchone()
+    assert row["project_path"] == "/p"
+    assert row["session_id"] == "codex:t1"
+    assert repo.resolve_prompt_projects() == 0  # idempotent
+
+
+def test_link_prompt_prefers_stored_session_id(repo):
+    from tests.conftest import session_factory
+
+    repo.upsert_session(session_factory("codex:t1", "2026-09-01T10:00:00Z", agent="codex"))
+    assert repo.link_prompt_to_session("/p", 0, session_id="codex:t1") == "codex:t1"
+    # Unknown stored id falls back to the heuristic (no match here).
+    assert repo.link_prompt_to_session("/nope", 0, session_id="codex:missing") is None

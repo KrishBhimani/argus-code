@@ -5,3 +5,4 @@ Importing this module auto-imports every known adapter so their
 """
 # Side-effect imports — each adapter's package self-registers via @register.
 from . import claude_code  # noqa: F401
+from . import codex  # noqa: F401

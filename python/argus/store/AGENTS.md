@@ -19,6 +19,14 @@ migrations; `repository.py` is the typed read/write API over SQLite.
   re-run of an `ADD COLUMN` is a no-op. `_split_statements` respects trigger
   `BEGIN…END` and `CASE…END`, so don't hand it naive `;`-splitting assumptions.
   The DB runs in autocommit (`isolation_level=None`); `executescript` force-commits.
+- **The recorded `schema_version` is not trusted on its own.** Every versioned
+  migration has a marker in `db._MIGRATION_MARKERS` (a table, or a table +
+  column it must create). After the version loop `open_db` re-runs any migration
+  whose marker is missing, stamping `max(current, version)` so the version never
+  moves backwards. This is what recovers a DB that a *different branch's*
+  migration of the same number stamped (it happened: `feat/workflow-observability`
+  had its own 007). **When you add `MIGRATION_00N`, add its marker too** — a
+  migration without a marker cannot be healed.
 - **`normalize_project_path` is a cross-source join key.** It maps `\`→`/`,
   strips a trailing `/`, preserves empty, and **lowercases on Windows**. Both the
   session-ingest side and the `history.jsonl` prompt side MUST pass project paths
@@ -35,6 +43,11 @@ migrations; `repository.py` is the typed read/write API over SQLite.
   applying its per-run cap.
 - **Upserts are idempotent** (conflict-replace) so re-ingesting a file from a reset
   offset never duplicates or corrupts rows.
+- **`prompts.session_id` (migration 007) is the exact prompt→session link** when
+  the source records it (Codex `history.jsonl`); NULL for Claude's history.
+  `link_prompt_to_session` prefers it and falls back to the project+timestamp
+  heuristic; `resolve_prompt_projects` fills an empty `project_path` from the
+  linked session and is idempotent.
 
 ## Work Guidance
 

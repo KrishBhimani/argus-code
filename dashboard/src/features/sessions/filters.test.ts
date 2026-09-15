@@ -13,3 +13,9 @@ it('filters by text, model, window and errors', () => {
   expect(applyFilters(s, { q: '', project: null, model: null, window: '7d', hasErrors: false }, {}, today).map((x) => x.id)).toEqual(['1']);
   expect(applyFilters(s, { q: '', project: null, model: null, window: 'all', hasErrors: true }, { '2': 3 }, today).map((x) => x.id)).toEqual(['2']);
 });
+
+it('filters by agent and matches the agent label in text search', () => {
+  const t = [mk({ id: 'c', agent: 'claude_code' }), mk({ id: 'x', agent: 'codex', primary_model: 'gpt-5.5' })];
+  expect(applyFilters(t, { q: '', project: null, model: null, window: 'all', hasErrors: false, agent: 'codex' }, {}, today).map((x) => x.id)).toEqual(['x']);
+  expect(applyFilters(t, { q: 'codex', project: null, model: null, window: 'all', hasErrors: false }, {}, today).map((x) => x.id)).toEqual(['x']);
+});

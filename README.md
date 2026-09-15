@@ -27,10 +27,10 @@
 
 Claude Code writes a detailed transcript of every session to `~/.claude/` — every turn,
 every token, every tool call, every sub-agent it spawned — and then tells you almost
-nothing about it. Argus tails those files into a SQLite archive on your machine, prices
-each turn, and serves a dashboard at `http://localhost:4242` that answers the questions
-the transcripts never do: *what am I spending, where did it go, and which turn made it
-so?*
+nothing about it. Codex CLI does the same under `~/.codex/`. Argus tails those files
+into a SQLite archive on your machine, prices each turn, and serves a dashboard at
+`http://localhost:4242` that answers the questions the transcripts never do: *what am
+I spending, where did it go, and which turn made it so?*
 
 Nothing leaves your computer. No telemetry, no API calls, no embeddings — SQLite and a
 static web app, bound to `127.0.0.1`.
@@ -46,7 +46,8 @@ argus start
 
 Your browser opens once the first pass finishes (5–10 s for a typical install). From
 then on, every session you run is ingested live. All you need is Python ≥ 3.11 and a
-`~/.claude/` directory — i.e. you've used Claude Code at least once.
+`~/.claude/` or `~/.codex/sessions/` directory — i.e. you've used Claude Code or Codex
+CLI at least once.
 
 ## ✨ Why Argus
 
@@ -70,7 +71,7 @@ stays forever; a few months in, Argus remembers sessions Claude has already forg
 
 A virtualised, sortable grid of every session you've ever run, with inline token bars
 and a **duration × tokens scatter** (log–log, coloured by model) that makes outliers
-obvious. Filter by text, project, model or time window; export to CSV.
+obvious. Filter by text, project, model, agent or time window; export to CSV.
 
 <img src="https://raw.githubusercontent.com/KrishBhimani/argus-code/main/assets/screenshots/sessions.png" alt="Sessions — sortable grid with duration × tokens scatter">
 
@@ -256,10 +257,28 @@ Claude Code deletes session files after 30 days by default. Raise it in
 
 Argus keeps its own copy regardless — this only widens what Claude itself retains.
 
+### Codex CLI
+
+Codex sessions are picked up automatically from `~/.codex/sessions/` (or
+`$CODEX_HOME`). Each `rollout-*.jsonl` becomes a session; every model response is a
+priced turn using the bundled OpenAI prices; tool calls, transcript search, spawned
+sub-agent threads and the `history.jsonl` prompt log all work the same way they do for
+Claude Code. Sessions from the two agents sit side by side, with an agent filter and
+column on the Sessions page and a per-agent split on Trends.
+
+Two things to know:
+
+- Rollouts written before Codex 0.34 (early September 2025), and by some builds since,
+  use an older format that records no token usage. Argus still lists their tool calls
+  and transcript, but tokens and cost show as zero and the model as `unknown`.
+- Codex compresses rollouts older than a week to `.jsonl.zst`. Argus reads those when
+  a zstd decoder is available (Python 3.14+, or `pip install zstandard` into the same
+  environment); otherwise it skips them once and says so on the Settings page.
+
 ## 📋 Requirements
 
 - **Python ≥ 3.11** with an FTS5-enabled `sqlite3` (the standard CPython builds for macOS, Linux and Windows all are; Argus checks at startup and says so clearly if not).
-- A `~/.claude/` directory with real session JSONL — i.e. you've used Claude Code at least once.
+- A `~/.claude/` directory (Claude Code) or a `~/.codex/sessions/` directory (Codex CLI) with real session JSONL — i.e. you've used one of them at least once.
 
 ## 🛠️ Development
 
@@ -281,7 +300,7 @@ wheel, so end users never touch `npm`. See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ```
 python/argus/         Python ingest, store, server, CLI
-  adapters/           Claude Code JSONL parsers + adapter registry
+  adapters/           Claude Code + Codex JSONL parsers + adapter registry
   store/              SQLite schema + migrations + repo
   server/             FastAPI app + /api routes
   collector/          watcher + pipeline + first-run + search backfill + alert scheduler

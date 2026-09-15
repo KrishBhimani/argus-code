@@ -183,3 +183,8 @@ MIGRATION_006 = """
 ALTER TABLE transcript_segments ADD COLUMN tool_use_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_segments_tool_use ON transcript_segments(session_id, tool_use_id);
 """
+
+MIGRATION_007 = """
+ALTER TABLE prompts ADD COLUMN session_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_prompts_session ON prompts(session_id);
+"""

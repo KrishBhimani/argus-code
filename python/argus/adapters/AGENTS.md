@@ -1,4 +1,4 @@
-# AGENTS.md — adapters (Claude Code transcript adapter)
+# AGENTS.md — adapters (Claude Code + Codex transcript adapters)
 
 Parent: `python/argus/AGENTS.md`. Parses agent transcript files into typed results.
 
@@ -8,7 +8,21 @@ Parent: `python/argus/AGENTS.md`. Parses agent transcript files into typed resul
 ingests files, `schemas.py` validates each line (`AssistantLine`, `UserLine`, …),
 `extract_transcript.py` derives searchable segments.
 
-## Local Contracts
+`codex/` reads OpenAI Codex CLI rollouts (`~/.codex/sessions/**/rollout-*.jsonl`):
+`discover.py` finds files and peeks line 1 to build a thread index, `lines.py`
+normalizes both on-disk formats into `Line` records, `extract_turns.py` /
+`extract_tool_calls.py` / `extract_transcript.py` derive rows, `state.py` carries
+per-file context across ticks, `history_jsonl.py` feeds the Prompts page.
+
+## Shared contracts (every adapter)
+
+- **`native_session_id(path)` is the only way a stored id maps back to a file.**
+  The collector (backfills, sub-session ids) calls it; never assume the file stem.
+  Claude Code returns the stem; Codex returns the thread uuid.
+- Adapters never import each other. Shared helpers (segment cap, realpath
+  containment) are duplicated per adapter on purpose.
+
+## Local Contracts — Claude Code (`claude_code/`)
 
 - **Discovery excludes sub-agent files.** `discover_session_files()` returns
   top-level session files only; sub-agent transcripts are reached via
@@ -51,7 +65,64 @@ ingests files, `schemas.py` validates each line (`AssistantLine`, `UserLine`, �
   takes `claude_root` and filters — required, not optional, so a new caller must
   confront it. Covers symlinks and NTFS junctions alike (both resolve out).
 
+## Local Contracts — Codex (`codex/`)
+
+- **Root and discovery.** `$CODEX_HOME` else `~/.codex`; present when `sessions/`
+  exists. Rollouts are `sessions/**` and `archived_sessions/**` files named
+  `rollout-<ts>-<thread uuid>[_<rollout uuid>].jsonl[.zst]`. Discovery peeks line 1
+  of every rollout (`ThreadIndex`) to classify format and parent links; it returns
+  root threads only. A child (meta `parent_thread_id` or
+  `source.subagent.thread_spawn.parent_thread_id`) is reached via
+  `sub_session_files_for(parent)` and skipped by the watcher, like Claude's
+  `subagents/`. `should_skip` is also true for every non-rollout `.jsonl` under
+  `~/.codex` (history, logs).
+- **Ids.** `native_session_id` is the thread uuid (plus `_<rollout>` for revert
+  files, which are distinct sessions); sub-sessions are `codex:<parent>/<child>`.
+- **Two on-disk formats.** Envelope (`{timestamp, ordinal?, type, payload}`, Codex
+  v0.34+) and legacy raw (line 1 `{id, timestamp, instructions}` then bare
+  Responses items, no usage). Both normalize to `Line`; the format is decided once
+  per file from line 1. Legacy files are still produced by some Codex builds in
+  2026 — real data on the dev machine had six of seven — so this path is live.
+- **Turn = one `token_count`.** Usage from `last_token_usage`; a repeated
+  `total_token_usage` is a rate-limit refresh and is skipped; totals are only
+  differenced when `last` is absent; all-zero usage (the context-window-exceeded
+  rewrite) is skipped. Model = latest `turn_context.model`, else
+  `thread_settings_applied`, else `unknown` (never a fabricated default). Legacy
+  raw files emit one zero-token turn per assistant message so tool calls and
+  transcript still exist.
+- **Holdback.** A tick consumes up to the last `token_count` line; the tail waits
+  for the next tick so every tool call/segment has its turn. A lone `session_meta`
+  at offset 0 is consumed on its own. Legacy raw and `.zst` files consume whole.
+  A prompt-only stub (no model response) therefore never becomes a session.
+- **Inherited history.** Paginated children/forks drop lines with
+  `ordinal < subagent_history_start_ordinal | forked_from_ordinal_exclusive |
+  history_base.end_ordinal_exclusive`. Legacy children/forks drop `token_count`
+  lines within 1 s of the meta timestamp (replayed parent usage). Duplicated
+  legacy segments/tool calls in children are a known limitation.
+- **Cross-tick state** (`state.py`) lives on the adapter instance keyed by
+  resolved path and is rebuilt from the file head on a miss; the protocol
+  signature is unchanged. Turn ids are `tc@<byte offset>` (`msg@` for legacy),
+  segment ids `<offset>:<block>` — stable across re-reads.
+- **User prompts** come from `user_message` events with `kind` absent or
+  `"plain"` (real v0.45 files tag injected context `"environment_context"`) or
+  paginated `item_completed` user items; raw user `response_item` messages are
+  never indexed.
+- **Prompts.** `history.jsonl` lines carry `session_id`; rows are written with
+  `project_path=''` when the session is not ingested yet and healed by
+  `Repository.resolve_prompt_projects()`.
+- **zstd is optional.** Without a decoder (`compression.zstd` on 3.14+ or the
+  `zstandard` package), `.zst` rollouts are skipped with one recorded parse error
+  and offset = size, never retried every tick.
+- **Unverified against a rollout with model responses** (the dev machine's real
+  files are prompt-only stubs): `token_count` cadence, `item_completed.item.type`
+  casing, exec-output error markers, `apply_patch` item kind, MCP `namespace`
+  shape. `tests/adapters/codex/test_real_root.py` is the gate.
+
 ## Verification
 
-`uv run pytest tests/adapters`. Real-`~/.claude/` tests are gated by
-`ARGUS_REAL_CLAUDE_ROOT` and skipped otherwise.
+`uv run pytest tests/adapters`. Real-data tests are gated by
+`ARGUS_REAL_CLAUDE_ROOT` / `ARGUS_REAL_CODEX_ROOT` and skipped otherwise.
+`uv run python scripts/codex_doctor.py` prints a structure-only diagnosis of a
+machine's Codex rollouts (record kinds, counts, what Argus extracts, parse
+errors) — safe to paste into an issue; ask for it before debugging "no Codex
+sessions" reports.

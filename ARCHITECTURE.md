@@ -10,7 +10,9 @@ contributor's map.
 Claude Code writes a `.jsonl` file every time you use it, one file per
 session, at `~/.claude/projects/<project>/<session-id>.jsonl`. Each
 line is one event: a user message, an assistant reply, a tool call, or
-a tool result.
+a tool result. Codex CLI does the same at
+`~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<thread-id>.jsonl`, with a
+different line shape (see `python/argus/adapters/AGENTS.md`).
 
 Argus is two things:
 
@@ -77,13 +79,13 @@ heatmap, Trends line chart, "Last N days" totals.
 ## The write path (ingest)
 
 ```
-~/.claude/projects/<proj>/<session-id>.jsonl
-        │
-        │  watchdog Observer emits add/change events
-        ▼
-python/argus/adapters/claude_code/    parse one line at a time
-        │
-        │  pydantic models validate each line
+~/.claude/projects/<proj>/<session-id>.jsonl      ~/.codex/sessions/.../rollout-*.jsonl
+        │                                                   │
+        │  watchdog Observer emits add/change events (one Observer per adapter root)
+        ▼                                                   ▼
+python/argus/adapters/claude_code/                python/argus/adapters/codex/
+        │  parse one line at a time; each adapter turns its own line shape into
+        │  the shared RawSessionHeader / RawTurnEvent / RawToolCall / RawSegment
         ▼
 python/argus/collector/pipeline.py    convert to sessions/turns/tool_calls
         │
@@ -252,9 +254,12 @@ A few patterns to absorb before adding code:
 - **Adapter registry.** Adapter classes self-register via the
   `@register` decorator (`python/argus/adapters/registry.py`).
   `available_adapters()` returns every registered class whose
-  `is_present()` is True. Adding a new adapter (Codex, OpenClaw,
-  Hermes, …) is one new folder + one `@register` — zero edits to CLI,
-  watcher, pipeline, or server.
+  `is_present()` is True. Two ship today: `claude_code` and `codex`.
+  Adding another (OpenClaw, Hermes, …) is one new folder + one
+  `@register` — zero edits to CLI, watcher, pipeline, or server.
+  The one thing the collector asks of an adapter beyond parsing is
+  `native_session_id(path)`: how a stored `<agent>:<id>` maps back to
+  its file. Never assume the file stem.
 
 ## Where things live
 
@@ -265,6 +270,7 @@ python/argus/
     base.py                 Adapter protocol + ParseError
     registry.py             @register + available_adapters()
     claude_code/            JSONL parsers, discovery, history.jsonl
+    codex/                  rollout parsers (envelope + legacy), thread index, history.jsonl
   collector/                pipeline, watcher, first-run, backfills, alert scheduler
   detectors/                alert detectors (pure reads) + @register registry
   scaffold/                 argus claude: template storage / init / snapshot
@@ -291,7 +297,8 @@ templates/                  bundled .claude/ scaffolding templates (shipped in w
 tests/                      pytest suite, mirrors python/argus/ layout
 ~/.argus/argus.db           SQLite DB (created on first run)
 ~/.argus/templates/         user-saved scaffolding templates (argus claude template create)
-~/.claude/                  source data we read from
+~/.claude/                  Claude Code source data we read from
+~/.codex/                   Codex CLI source data we read from ($CODEX_HOME)
 ```
 
 ## What's deliberately NOT here
@@ -316,6 +323,7 @@ tests/                      pytest suite, mirrors python/argus/ layout
 | Parse a new JSONL field | `python/argus/adapters/claude_code/schemas.py` (pydantic), wire into `pipeline.py` |
 | Tweak cost computation | `python/argus/pricing/compute.py`, then re-ingest to recompute via a backfill |
 | Add a new chart | `dashboard/src/components/charts/` (read its `README.md` first; series colours in `uplotTheme.ts`) |
-| Add a new adapter (Codex, OpenClaw, Hermes, …) | New folder `python/argus/adapters/<agent>/` + `@register class` in `adapter.py`. No edits to CLI / watcher / pipeline / server. |
+| Add a new adapter (OpenClaw, Hermes, …) | New folder `python/argus/adapters/<agent>/` + `@register class` in `adapter.py` implementing `native_session_id`. No edits to CLI / watcher / pipeline / server. `adapters/codex/` is the second worked example. |
+| Add a display name for a new agent | `dashboard/src/lib/agents.ts` (`AGENT_LABEL`, `resumeHint`). |
 | Add an alert detector | New file in `python/argus/detectors/` with a `@register` class whose pure `detect()` returns `Finding`s, plus the side-effect import in `detectors/__init__.py`. The scheduler picks it up automatically. |
 | Change the bundled scaffold template | Edit files under `templates/default/`; they're force-included into the wheel. New top-level dirs need a `force-include` entry in `pyproject.toml`. |

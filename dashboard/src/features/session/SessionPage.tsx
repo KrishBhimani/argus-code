@@ -12,6 +12,7 @@ import { Minimap } from '@/components/charts/Minimap';
 import { AreaLine } from '@/components/charts/AreaLine';
 import { Legend } from '@/components/charts/Legend';
 import { useSession, useSubagents, useTimeline } from '@/lib/api/hooks';
+import { agentLabel, resumeHint } from '@/lib/agents';
 import { dur, fmtLocalDateTime, num, pct, shortPath, tok, usd } from '@/lib/format/format';
 import { cumulativeCost, orderTurns, turnHasError } from './model';
 import { OverviewTab } from './OverviewTab';
@@ -50,14 +51,14 @@ export default function SessionPage() {
   return (
     <>
       <TopBar crumbs={[...crumbs]}>
-        <CopyId value={id} />
+        <CopyId value={id} hint={resumeHint(id)} />
         <Seg
           options={[{ value: 'overview', label: 'Overview' }, { value: 'timeline', label: 'Timeline' }, { value: 'subagents', label: `Sub-agents · ${subs.data?.length ?? 0}` }]}
           value={tab}
           onChange={setTab}
         />
         {sess && <Pill kind="mute">{sess.primary_model}</Pill>}
-        {sess?.agent_version && <Pill kind="mute">Claude Code {sess.agent_version}</Pill>}
+        {sess?.agent_version && <Pill kind="mute">{agentLabel(sess.agent)} {sess.agent_version}</Pill>}
       </TopBar>
       <Page>
         {!sess ? (

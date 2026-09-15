@@ -3,6 +3,7 @@ import { Panel } from '@/components/ui/Panel';
 import { Bars } from '@/components/charts/Bars';
 import { fmtLocalDateTime, num } from '@/lib/format/format';
 import { CopyId } from '@/components/ui/CopyId';
+import { agentLabel, resumeHint } from '@/lib/agents';
 import { cacheRatio, toolMix } from './model';
 
 export function OverviewTab({ session: s, turns }: { session: Session; turns: TimelineTurn[] }) {
@@ -10,7 +11,7 @@ export function OverviewTab({ session: s, turns }: { session: Session; turns: Ti
   const meta: [string, string][] = [
     ['Project', s.project_path],
     ['Primary model', s.primary_model],
-    ['Claude Code', s.agent_version ?? '—'],
+    [agentLabel(s.agent), s.agent_version ?? '—'],
     ['Started', `${fmtLocalDateTime(s.started_at)} (${tz})`],
     ['Ended', s.ended_at ? fmtLocalDateTime(s.ended_at) : 'running'],
     ['Fresh input', `${num(s.total_fresh_input_tokens)} tokens`],
@@ -32,7 +33,7 @@ export function OverviewTab({ session: s, turns }: { session: Session; turns: Ti
           ))}
           <div className="contents">
             <dt className="px-3.5 py-2 border-b border-line text-ink-1">Session id</dt>
-            <dd className="px-3.5 py-2 border-b border-line font-mono m-0 break-all flex items-center gap-2"><span>{s.id}</span><CopyId value={s.id} chars={0} /></dd>
+            <dd className="px-3.5 py-2 border-b border-line font-mono m-0 break-all flex items-center gap-2"><span>{s.id}</span><CopyId value={s.id} chars={0} hint={resumeHint(s.id)} /></dd>
           </div>
         </dl>
       </Panel>

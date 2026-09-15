@@ -619,17 +619,42 @@ class Repository:
                 "display": r.display,
                 "pasted_chars": r.pasted_chars,
                 "is_slash": r.is_slash,
+                "session_id": r.session_id,
             }
             for r in rows
         ]
         with self.db:
             self.db.executemany(
                 """
-                INSERT INTO prompts (timestamp_ms, project_path, display, pasted_chars, is_slash)
-                VALUES (:timestamp_ms, :project_path, :display, :pasted_chars, :is_slash)
+                INSERT INTO prompts (timestamp_ms, project_path, display, pasted_chars, is_slash, session_id)
+                VALUES (:timestamp_ms, :project_path, :display, :pasted_chars, :is_slash, :session_id)
                 """,
                 params,
             )
+
+    def resolve_prompt_projects(self) -> int:
+        """Fill ``project_path`` on prompts that carry a ``session_id`` whose
+        session row now exists. Idempotent; returns the number of rows updated.
+
+        Codex writes ``history.jsonl`` before the first ``token_count``, and
+        Argus never creates a turnless session, so most Codex prompts arrive
+        before their session and are stored with an empty project."""
+        with self.db:
+            cur = self.db.execute(
+                """
+                UPDATE prompts
+                SET project_path = (
+                    SELECT s.project_path FROM sessions s WHERE s.id = prompts.session_id
+                )
+                WHERE project_path = ''
+                  AND session_id IS NOT NULL
+                  AND EXISTS (
+                    SELECT 1 FROM sessions s
+                    WHERE s.id = prompts.session_id AND s.project_path != ''
+                  )
+                """
+            )
+            return cur.rowcount if cur.rowcount is not None and cur.rowcount > 0 else 0
 
     def search_prompts(
         self,
@@ -699,7 +724,17 @@ class Repository:
         ).fetchall()
         return [r["project_path"] for r in rows]
 
-    def link_prompt_to_session(self, project_path: str, timestamp_ms: int) -> str | None:
+    def link_prompt_to_session(
+        self, project_path: str, timestamp_ms: int, session_id: str | None = None
+    ) -> str | None:
+        """Session for a prompt: the stored ``session_id`` when it names a real
+        row, else the closest session on the same project spanning the time."""
+        if session_id:
+            hit = self.db.execute(
+                "SELECT id FROM sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+            if hit:
+                return hit["id"]
         row = self.db.execute(
             """
             SELECT id FROM sessions

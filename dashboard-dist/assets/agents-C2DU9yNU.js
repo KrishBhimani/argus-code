@@ -1,0 +1,1 @@
+const u={claude_code:"Claude Code",codex:"Codex"},n=e=>u[e]??e;function o(e){const c=e.indexOf(":");if(c<0)return e;const t=e.slice(0,c),r=e.slice(c+1);return t==="claude_code"?`claude --resume ${r}`:t==="codex"?`codex resume ${r}`:r}export{n as a,o as r};

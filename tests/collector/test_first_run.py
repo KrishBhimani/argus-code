@@ -38,6 +38,38 @@ def _line(sid: str, mid: str, ts: str) -> str:
     )
 
 
+def test_backfill_locates_file_via_native_session_id(tmp_path: Path, repo, monkeypatch):
+    """A backfill must ask the adapter for the native id, not assume the file
+    stem. With the stem assumption, 'real-id' would never map to weird-name.jsonl
+    and the file would not be re-read (offset stays at 0)."""
+    from argus.collector import first_run
+    from argus.collector.pipeline import ingest_file
+
+    claude_root = tmp_path / ".claude"
+    proj = claude_root / "projects" / "C--proj"
+    proj.mkdir(parents=True)
+    f = proj / "weird-name.jsonl"
+    f.write_text(_line("s", "m1", "2026-05-22T00:00:00Z") + "\n", encoding="utf-8")
+
+    class Renamed(ClaudeCodeAdapter):
+        def native_session_id(self, path: Path) -> str:
+            return "real-id"
+
+    adapter = Renamed(claude_root)
+    table = load_pricing_table()
+    ingest_file(adapter, f, repo, table)
+    repo.set_file_offset(str(f), 0)
+    # Pin the one-shot sweeps as done so the only route back to the file is
+    # the sessions_missing_tool_calls candidate below.
+    repo.set_app_meta(first_run.STREAMED_OUTPUT_FIX_KEY, "1")
+    repo.set_app_meta("backfill_agent_subagent_type_v1", "1")
+    monkeypatch.setattr(
+        repo, "sessions_missing_tool_calls", lambda n: [{"id": "claude_code:real-id"}]
+    )
+    first_run._backfill_missing_derived_data([adapter], repo, table)
+    assert repo.get_file_offset(str(f)) == f.stat().st_size
+
+
 def test_ingests_recent_files_in_foreground_older_in_background(tmp_path: Path, repo):
     """REGRESSION: status.processed/total reflect both phases after backfill done."""
     claude_root = tmp_path / ".claude"
