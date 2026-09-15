@@ -122,3 +122,7 @@ per-file context across ticks, `history_jsonl.py` feeds the Prompts page.
 
 `uv run pytest tests/adapters`. Real-data tests are gated by
 `ARGUS_REAL_CLAUDE_ROOT` / `ARGUS_REAL_CODEX_ROOT` and skipped otherwise.
+`uv run python scripts/codex_doctor.py` prints a structure-only diagnosis of a
+machine's Codex rollouts (record kinds, counts, what Argus extracts, parse
+errors) — safe to paste into an issue; ask for it before debugging "no Codex
+sessions" reports.
