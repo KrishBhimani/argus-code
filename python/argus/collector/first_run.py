@@ -189,7 +189,19 @@ def run_first_pass_ingest(
         _backfill_missing_derived_data(adapters, repo, table)
         # Prompts that arrived before their session (Codex writes history.jsonl
         # before the first token_count) get their project once the session exists.
-        repo.resolve_prompt_projects()
+        # Guarded like every other step: an exception here must not kill the
+        # thread before _backfill_done is set (shutdown joins on it).
+        try:
+            repo.resolve_prompt_projects()
+        except Exception as e:  # noqa: BLE001
+            repo.record_parse_error(
+                {
+                    "file": "",
+                    "byte_offset": -1,
+                    "reason": f"[prompt-link] {e}",
+                    "raw_line_truncated": "",
+                }
+            )
         handle._backfill_done.set()
 
     thread = threading.Thread(

@@ -166,6 +166,36 @@ def test_open_db_recovers_from_half_applied_migration(db_path):
         conn.close()
 
 
+@pytest.mark.skipif(sqlite3.sqlite_version_info < (3, 35, 0), reason="DROP COLUMN needs SQLite 3.35+")
+def test_open_db_heals_version_stamped_ahead_of_schema(db_path):
+    """Regression: a dev DB recorded schema_version 7 without prompts.session_id.
+
+    A different branch (feat/workflow-observability) shipped its own
+    MIGRATION_007, ran locally, and stamped 7; this branch's 007 was then
+    skipped as "already applied" and `argus start` crashed with
+    `no such column: prompts.session_id`. The version number alone cannot be
+    trusted: open_db must verify each migration's artifact and re-run the
+    migration when it is missing (every migration is idempotent).
+    """
+    conn = open_db(db_path)
+    conn.execute("DROP INDEX IF EXISTS idx_prompts_session")
+    conn.execute("ALTER TABLE prompts DROP COLUMN session_id")
+    ver = conn.execute("SELECT value FROM app_meta WHERE key = 'schema_version'").fetchone()
+    assert int(ver["value"]) == SCHEMA_VERSION  # version says "done", schema disagrees
+    conn.close()
+
+    conn = open_db(db_path)
+    try:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(prompts)")}
+        assert "session_id" in cols
+        idx = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+        assert "idx_prompts_session" in idx
+        ver = conn.execute("SELECT value FROM app_meta WHERE key = 'schema_version'").fetchone()
+        assert int(ver["value"]) == SCHEMA_VERSION  # never stamped backwards
+    finally:
+        conn.close()
+
+
 def test_alerts_has_resolved_at_column(db_path):
     conn = open_db(db_path)
     try:

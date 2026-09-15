@@ -21,6 +21,23 @@ from .migrations.inline import (
 
 SCHEMA_VERSION = 7
 
+# (version, table, column-or-None): the artifact each versioned migration must
+# leave behind. A recorded schema_version can run ahead of the real schema — a
+# crash between DDL and the version bump, or a *different* branch's migration
+# stamping the same number (a dev DB reached "7" without prompts.session_id
+# that way). So after the version loop we verify each marker and re-run any
+# migration whose artifact is missing. Safe because every migration is
+# idempotent: IF NOT EXISTS, duplicate-column-tolerant ADD COLUMN, idempotent
+# UPDATE.
+_MIGRATION_MARKERS: tuple[tuple[int, str, str | None], ...] = (
+    (2, "sessions", "started_at_ms"),
+    (3, "transcript_segments", None),
+    (4, "alerts", None),
+    (5, "alerts", "resolved_at"),
+    (6, "transcript_segments", "tool_use_id"),
+    (7, "prompts", "session_id"),
+)
+
 
 class FTS5NotAvailableError(RuntimeError):
     """Raised when the Python sqlite3 build lacks FTS5 support."""
@@ -110,6 +127,13 @@ def _run_migration(conn: sqlite3.Connection, version: int, sql: str) -> None:
         raise
 
 
+def _has_artifact(conn: sqlite3.Connection, table: str, column: str | None) -> bool:
+    cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+    if not cols:
+        return False  # table missing
+    return column is None or column in cols
+
+
 def open_db(path: str | Path, *, read_only: bool = False) -> sqlite3.Connection:
     """Open the Argus SQLite DB at ``path``.
 
@@ -190,5 +214,12 @@ def open_db(path: str | Path, *, read_only: bool = False) -> sqlite3.Connection:
         if current < version:
             _run_migration(conn, version, sql)
             current = version
+
+    # Self-heal: the version says a migration ran, but its artifact is absent.
+    # Re-run it without ever stamping the version backwards.
+    by_version = dict(versioned)
+    for version, table, column in _MIGRATION_MARKERS:
+        if not _has_artifact(conn, table, column):
+            _run_migration(conn, max(current, version), by_version[version])
 
     return conn
