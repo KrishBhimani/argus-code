@@ -45,9 +45,31 @@ def _bundled_dir() -> Path:
     return here.parents[3] / "pricing"
 
 
-def load_pricing_table(path: Path | None = None) -> PricingTable:
-    """Read a pricing JSON from disk and parse it. With no explicit path,
-    loads the newest table in the bundled dir (refreshes write new files)."""
-    p = path or _latest_table_file(_bundled_dir())
-    raw = p.read_text(encoding="utf-8")
+def user_pricing_dir(data_dir: Path) -> Path:
+    """Where ``argus pricing refresh`` writes: ``<data_dir>/pricing``.
+
+    Outside the installed package on purpose — site-packages is wiped by an
+    upgrade and may be read-only.
+    """
+    return Path(data_dir) / "pricing"
+
+
+def load_pricing_table(
+    path: Path | None = None, *, user_dir: Path | None = None
+) -> PricingTable:
+    """Read a pricing JSON from disk and parse it.
+
+    With no explicit ``path``, loads the newest table (versions are ISO dates)
+    across the bundled dir and, when given, ``user_dir`` (refreshed tables).
+    Newest wins either way: a refresh takes effect, and a newer table shipped
+    by an upgrade isn't shadowed by an old refresh. ``user_dir`` is opt-in so
+    library callers and tests never read the real ``~/.argus`` implicitly.
+    """
+    if path is None:
+        candidates = [_latest_table_file(_bundled_dir())]
+        if user_dir is not None and user_dir.is_dir() and any(user_dir.glob("*.json")):
+            candidates.append(_latest_table_file(user_dir))
+        # Same version in both → prefer the user's copy (listed last).
+        path = max(reversed(candidates), key=lambda f: f.name)
+    raw = path.read_text(encoding="utf-8")
     return PricingTable.model_validate(json.loads(raw))

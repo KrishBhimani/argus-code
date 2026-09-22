@@ -1,11 +1,17 @@
 """Per-turn cost computation."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from .types import PricingTable
 
 PER_MTOK = 1_000_000
+
+logger = logging.getLogger("argus.pricing")
+
+#: Models already reported as unpriced (log once per process, not per turn).
+_warned_unknown: set[str] = set()
 
 
 def compute_turn_cost(t: Any, table: PricingTable) -> float:
@@ -25,6 +31,16 @@ def compute_turn_cost(t: Any, table: PricingTable) -> float:
     model = g("model")
     p = table.models.get(model)
     if p is None:
+        # $0 is indistinguishable from "free" on the dashboard, so say so.
+        # The startup backfill re-prices these turns once a table has them.
+        if model and model not in _warned_unknown:
+            _warned_unknown.add(model)
+            logger.warning(
+                "No price for model %r in pricing table %s; its turns cost $0 until "
+                "a table includes it (upgrade argus or run `argus pricing refresh`).",
+                model,
+                table.version,
+            )
         return 0.0
 
     cw5 = p.cache_write_5m if p.cache_write_5m is not None else p.input

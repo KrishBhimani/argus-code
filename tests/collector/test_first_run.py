@@ -306,3 +306,31 @@ def test_backfill_reprices_zero_cost_turns(tmp_path: Path, repo):
     # 1000 in * $10/M + 2000 out * $50/M = 0.01 + 0.10
     assert abs(session.total_cost_usd - 0.11) < 1e-9
     assert repo.sessions_with_unpriced_turns(list(table.models.keys()), 10) == []
+
+
+def test_backfill_reprices_claude_opus_5_turns_after_table_upgrade(tmp_path: Path, repo):
+    """REGRESSION (H3): claude-opus-5 turns ingested under the 2026-06-12 table
+    (which lacked the model) are $0; the next start with the newer bundled
+    table re-prices them through sessions_with_unpriced_turns."""
+    from argus.collector.first_run import _backfill_missing_derived_data
+    from argus.collector.pipeline import ingest_file
+    from argus.pricing.load import _bundled_dir
+
+    claude_root = tmp_path / ".claude"
+    proj = claude_root / "projects" / "C--proj"
+    proj.mkdir(parents=True)
+    f = proj / "s1.jsonl"
+    line = json.loads(_line("s1", "m1", "2026-09-01T00:00:00Z"))
+    line["message"]["model"] = "claude-opus-5"
+    line["message"]["content"] = [{"type": "tool_use", "id": "tu_1", "name": "Bash", "input": {}}]
+    line["message"]["usage"].update(input_tokens=1000, output_tokens=2000)
+    f.write_text(json.dumps(line) + "\n", encoding="utf-8")
+    adapter = ClaudeCodeAdapter(claude_root)
+
+    old = load_pricing_table(_bundled_dir() / "2026-06-12.json")
+    ingest_file(adapter, f, repo, old)
+    assert repo.get_session("claude_code:s1").total_cost_usd == 0
+
+    _backfill_missing_derived_data([adapter], repo, load_pricing_table())
+    # 1000 in * $5/M + 2000 out * $25/M = 0.005 + 0.05
+    assert abs(repo.get_session("claude_code:s1").total_cost_usd - 0.055) < 1e-9
