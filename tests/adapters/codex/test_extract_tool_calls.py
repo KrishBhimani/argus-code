@@ -93,7 +93,9 @@ def test_calls_are_attributed_to_the_turn_that_follows(tmp_path):
         tc(t2, usage(10, out=1)),
     ])
     assert [c.tool_use_id for c in calls] == ["c1", "c2", "c3", "c4"]
-    assert [c.turn_index for c in calls] == [0, 1, 1, 1]
+    # turn_index is the owning turn's file-wide sequence (its token_count's offset).
+    assert [c.turn_index for c in calls] == [turns[0].sequence] + [turns[1].sequence] * 3
+    assert turns[0].sequence < turns[1].sequence
     assert [c.block_index for c in calls] == [0, 0, 1, 2]
     assert calls[0].native_turn_id == turns[0].native_turn_id
     assert calls[1].native_turn_id == turns[1].native_turn_id

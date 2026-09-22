@@ -167,3 +167,17 @@ def test_index_rejects_escaping_junction(tmp_path):
     idx = ThreadIndex(root)
     assert idx.refresh() == []
     assert not is_rollout_path(root, link / NAME)
+
+
+def test_children_survive_a_second_refresh(tmp_path):
+    """REGRESSION: refresh() cleared _children but a cached (unchanged) _peek
+    returned before re-registering the parent->child link, so after the second
+    refresh (first-run backfill and search backfill both refresh) a parent had
+    no children and its sub-agent segments never backfilled."""
+    root = tmp_path / ".codex"
+    parent = _write(root, f"sessions/2026/09/01/{NAME}", [meta()])
+    child = _write(root, f"sessions/2026/09/01/rollout-2026-09-01T10-00-01-{CHILD}.jsonl", [meta(CHILD, parent_thread_id=THREAD)])
+    idx = ThreadIndex(root)
+    idx.refresh()
+    idx.refresh()
+    assert idx.children_of(parent) == [child]

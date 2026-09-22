@@ -100,6 +100,9 @@ def ingest_file(
 
     if result.tool_calls:
         repo.upsert_tool_calls([_to_tool_call(r, session_id) for r in result.tool_calls])
+    # After the upsert, so a call and its error in the same tick both land; an
+    # error whose call an earlier tick stored is applied to that stored row.
+    repo.mark_tool_calls_errored(session_id, result.tool_error_ids)
 
     if result.segments and repo.is_search_indexing_enabled():
         repo.upsert_transcript_segments(
@@ -154,6 +157,7 @@ def ingest_file(
                 repo.upsert_tool_calls(
                     [_to_tool_call(r, sub_session_id) for r in sub_result.tool_calls]
                 )
+            repo.mark_tool_calls_errored(sub_session_id, sub_result.tool_error_ids)
             if sub_result.segments and repo.is_search_indexing_enabled():
                 repo.upsert_transcript_segments(
                     [_to_segment(r, sub_session_id) for r in sub_result.segments]
