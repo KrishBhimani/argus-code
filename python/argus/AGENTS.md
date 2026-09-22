@@ -12,12 +12,14 @@ the dashboard, and provide the `argus` CLI. Runs directly from source
 
 This doc owns backend-wide rules and the subsystems that have no child doc:
 - `core/` — runtime wiring (`RuntimeOptions`, building the watcher + server).
-  **`CoreRuntime.stop()` never closes the DB under a live writer.** It asks
-  first-run's background phase (`FirstRunHandle.request_stop`) and the search
-  backfill (`request_search_backfill_stop`) to stop after their current file,
-  joins both by thread name (`join_first_run_threads`,
-  `join_search_backfill_threads`, `writer_join_timeout` each), and if either is
-  still alive it logs and **skips `close()`** — process exit reclaims the handle.
+  **`CoreRuntime.stop()` never closes the DB under a live thread.** It stops the
+  scheduler and the watcher (their `stop(timeout)` returns whether the threads
+  exited), asks first-run's background phase (`FirstRunHandle.request_stop`)
+  and the search backfill (`request_search_backfill_stop`) to stop after their
+  current file, joins both by thread name (`join_first_run_threads`,
+  `join_search_backfill_threads`; `writer_join_timeout` each), and if **any**
+  of the four is still alive it logs and **skips `close()`** — process exit
+  reclaims the handle.
   A new background thread that writes to the connection must get the same
   stop-event + name-based join and be added here and to the `db` test fixture.
 - `daemon/` — `argusd` background service: pidfile, process lifecycle, logging.

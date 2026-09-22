@@ -149,11 +149,18 @@ class CoreRuntime:
         return self._first_run.status()
 
     def stop(self) -> None:
+        # Every thread that touches the shared connection must be confirmed
+        # gone before close(): the scheduler (detector ticks write alerts), the
+        # watcher's ingest worker, first-run's background phase and the
+        # search-index backfill. Any still alive -> leave the DB open.
+        stuck: list[str] = []
         if self._scheduler is not None:
-            self._scheduler.stop()
+            if not self._scheduler.stop(timeout=self.writer_join_timeout):
+                stuck.append("argus-scheduler")
             self._scheduler = None
         if self._watcher is not None:
-            self._watcher.stop()
+            if not self._watcher.stop(timeout=self.writer_join_timeout):
+                stuck.append("argus-ingest")
             self._watcher = None
         # Background writers share the SQLite connection: first-run's
         # background phase and the search-index backfill. Ask both to stop
@@ -163,9 +170,8 @@ class CoreRuntime:
         if self._first_run is not None:
             self._first_run.request_stop()
         request_search_backfill_stop()
-        stuck = join_first_run_threads(self.writer_join_timeout) + join_search_backfill_threads(
-            self.writer_join_timeout
-        )
+        stuck += join_first_run_threads(self.writer_join_timeout)
+        stuck += join_search_backfill_threads(self.writer_join_timeout)
         self._first_run = None
         if self._db is not None:
             if stuck:

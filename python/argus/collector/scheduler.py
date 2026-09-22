@@ -66,9 +66,15 @@ class SchedulerHandle:
         self._thread = thread
         self._stop = stop_event
 
-    def stop(self) -> None:
+    def stop(self, timeout: float = 10.0) -> bool:
+        """Stop the loop; True once its thread has exited.
+
+        A detector tick writes alerts through the shared DB connection, so
+        callers must not close the connection while this returns False.
+        """
         self._stop.set()
-        self._thread.join(timeout=5)
+        self._thread.join(timeout=timeout)
+        return not self._thread.is_alive()
 
 
 def start_scheduler(

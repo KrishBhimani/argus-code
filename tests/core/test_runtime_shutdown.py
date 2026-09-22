@@ -176,3 +176,61 @@ def test_interrupted_backfill_does_not_mark_one_shot_fixes_done(tmp_path: Path, 
     _backfill_missing_derived_data([ClaudeCodeAdapter(tmp_path / ".claude")], repo,
                                    load_pricing_table(), should_stop=lambda: True)
     assert repo.get_app_meta("backfill_agent_subagent_type_v1") is None
+
+
+class _Handle:
+    """Stand-in for a scheduler/watcher handle whose thread won't exit in time."""
+
+    def __init__(self, calls: list[str], name: str, exited: bool):
+        self.calls, self.name, self.exited = calls, name, exited
+
+    def stop(self, timeout: float = 10.0) -> bool:
+        self.calls.append(f"{self.name}.stop")
+        return self.exited
+
+
+def test_stop_skips_close_while_the_scheduler_thread_is_alive(tmp_path: Path, caplog) -> None:
+    """REGRESSION (CI, Windows py3.13): scheduler.stop() joined with a timeout
+    and its result was ignored, so the DB could be closed under a detector tick."""
+    calls: list[str] = []
+    rt = CoreRuntime(tmp_path)
+    rt._scheduler = _Handle(calls, "scheduler", exited=False)
+    rt._watcher = _Handle(calls, "watcher", exited=True)
+    rt._db = _DBProxy(calls)
+    rt.stop()
+    assert calls == ["scheduler.stop", "watcher.stop"]  # no db.close
+    assert any("argus-scheduler" in r.getMessage() for r in caplog.records)
+
+
+def test_stop_skips_close_while_the_watcher_worker_is_alive(tmp_path: Path) -> None:
+    calls: list[str] = []
+    rt = CoreRuntime(tmp_path)
+    rt._scheduler = _Handle(calls, "scheduler", exited=True)
+    rt._watcher = _Handle(calls, "watcher", exited=False)
+    rt._db = _DBProxy(calls)
+    rt.stop()
+    assert "db.close" not in calls
+
+
+def test_stop_closes_when_every_thread_exited(tmp_path: Path) -> None:
+    calls: list[str] = []
+    rt = CoreRuntime(tmp_path)
+    rt._scheduler = _Handle(calls, "scheduler", exited=True)
+    rt._watcher = _Handle(calls, "watcher", exited=True)
+    rt._db = _DBProxy(calls)
+    rt.stop()
+    assert calls == ["scheduler.stop", "watcher.stop", "db.close"]
+
+
+def test_scheduler_and_watcher_stop_report_whether_their_threads_exited(tmp_path: Path, repo) -> None:
+    from argus.collector.scheduler import start_scheduler
+    from argus.collector.watcher import start_watcher
+
+    sched = start_scheduler([], repo, interval_sec=600)
+    assert sched.stop(timeout=10) is True
+    (tmp_path / ".claude").mkdir()
+    from argus.adapters.claude_code.adapter import ClaudeCodeAdapter
+    from argus.pricing.load import load_pricing_table
+
+    w = start_watcher([ClaudeCodeAdapter(tmp_path / ".claude")], repo, load_pricing_table())
+    assert w.stop(timeout=10) is True
