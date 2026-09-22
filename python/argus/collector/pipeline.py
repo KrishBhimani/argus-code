@@ -225,7 +225,10 @@ def recompute_stored_session(repo: Repository, session_id: str, pricing_version:
         agent=existing.agent,
         agent_version=existing.agent_version,
         project_path=existing.project_path,
-        started_at="" if turns else existing.started_at,
+        # No turns left (a fork that only held copies): nothing of its own
+        # happened, so collapse to its last activity rather than keep a start
+        # inherited from copied lines.
+        started_at="" if turns else (existing.ended_at or existing.started_at),
         ended_at=existing.ended_at,
         agent_reported_cost_usd=existing.agent_reported_cost_usd,
         metadata={k: v for k, v in existing.metadata.items() if k != "sub_agent_session_ids"},
@@ -251,13 +254,15 @@ def _reclaim_fork_copies(
     own = [t.native_turn_id for t in result.turns if not t.metadata.get("origin_session_id")]
     if not own:
         return
-    copies = repo.fork_copies_of(session_id, own)
-    by_fork: dict[str, set[str]] = {}
-    for t in copies:
-        by_fork.setdefault(t.session_id, set()).add(t.id[len(t.session_id) + 1 :])
-    for fork_id, mids in by_fork.items():
-        tool_ids = [c.tool_use_id for c in result.tool_calls if c.native_turn_id in mids]
-        repo.delete_duplicated_turns(fork_id, sorted(mids), tool_ids)
+    by_fork: dict[str, list[Turn]] = {}
+    for t in repo.fork_copies_of(session_id, own):
+        by_fork.setdefault(t.session_id, []).append(t)
+    for fork_id, copies in by_fork.items():
+        # Tagged copies are only written by this code, where a call's
+        # turn_index is its turn's file-wide sequence — so the fork's copied
+        # calls are found by sequence, including calls of a message whose
+        # tool_use lines the origin read in an earlier tick than this one.
+        repo.delete_fork_copy_turns(fork_id, copies)
         recompute_stored_session(repo, fork_id, table.version)
 
 

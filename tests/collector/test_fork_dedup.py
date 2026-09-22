@@ -141,3 +141,42 @@ def test_repair_removes_existing_fork_duplicates_once(tmp_path: Path, repo) -> N
     repo.set_app_meta(FORK_DEDUP_REPAIR_KEY, "0")
     _repair_fork_duplicates_once([adapter], repo, table)  # idempotent
     assert [tuple(r) for r in repo.db.execute("SELECT * FROM turns ORDER BY id")] == before
+
+
+def test_reclaim_removes_copy_calls_the_parent_read_in_an_earlier_tick(tmp_path: Path, repo) -> None:
+    """The parent may read a streamed message's tool_use lines over several
+    ticks; every tool call of the fork's copy must go, not only this tick's."""
+    root = tmp_path / ".claude"
+    proj = root / "projects" / "-proj"
+    proj.mkdir(parents=True)
+    head = _asst(PARENT, "m1", "2026-05-01T10:00:00.000Z", "u1", tool="t1")
+    tail = _asst(PARENT, "m1", "2026-05-01T10:00:01.000Z", "u2", tool="t2")
+    parent, fork = proj / f"{PARENT}.jsonl", proj / f"{FORK}.jsonl"
+    fork.write_text("".join(json.dumps({**x, "sessionId": FORK, "session_id": PARENT}) + "\n"
+                            for x in (head, tail))
+                    + json.dumps(_asst(FORK, "f1", "2026-05-02T09:00:00.000Z", "u9", tool="t9")) + "\n",
+                    encoding="utf-8")
+    adapter, table = ClaudeCodeAdapter(root), load_pricing_table()
+    ingest_file(adapter, fork, repo, table)            # fork first: copies stored, tagged
+    parent.write_text(json.dumps(head) + "\n", encoding="utf-8")
+    ingest_file(adapter, parent, repo, table)          # parent tick 1: m1 head (t1)
+    with parent.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(tail) + "\n")
+    ingest_file(adapter, parent, repo, table)          # parent tick 2: m1 tail (t2)
+    assert _rows(repo, f"claude_code:{FORK}") == (["f1"], ["t9"])
+    assert _rows(repo, f"claude_code:{PARENT}") == (["m1"], ["t1", "t2"])
+
+
+def test_fork_with_only_copies_does_not_keep_the_parents_start(tmp_path: Path, repo) -> None:
+    root = tmp_path / ".claude"
+    proj = root / "projects" / "-proj"
+    proj.mkdir(parents=True)
+    parent, fork = proj / f"{PARENT}.jsonl", proj / f"{FORK}.jsonl"
+    parent.write_text("".join(json.dumps(x) + "\n" for x in _parent_lines()), encoding="utf-8")
+    fork.write_text("".join(json.dumps(x) + "\n" for x in _fork_lines()[:2]), encoding="utf-8")
+    adapter, table = ClaudeCodeAdapter(root), load_pricing_table()
+    ingest_file(adapter, fork, repo, table)
+    ingest_file(adapter, parent, repo, table)
+    f = repo.get_session(f"claude_code:{FORK}")
+    assert f.turn_count == 0 and f.total_cache_read_tokens == 0
+    assert f.started_at == f.ended_at and f.duration_sec == 0
