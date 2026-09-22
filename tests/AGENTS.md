@@ -35,8 +35,9 @@ this doc is the binding conventions.
   `det.calls` then asserted on `alerts` (written later), and the first-run test
   asserted a background thread hadn't finished yet. Both are now deterministic;
   the "known Windows scheduler flake" is gone, not tolerated.
-- **Anything that closes the DB must first join first-run's background thread**
-  (`join_first_run_threads`, wired into the `db` fixture). That thread writes to
+- **Anything that closes the DB must first join the background writer threads**
+  (`join_first_run_threads` and `join_search_backfill_threads`, both wired into
+  the `db` fixture). Those threads write to
   the connection, and closing a `sqlite3` connection out from under another
   thread is undefined behaviour — it segfaulted CI (exit 139) rather than
   failing a test.

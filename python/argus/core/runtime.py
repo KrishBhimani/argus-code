@@ -17,7 +17,15 @@ from pathlib import Path
 
 from ..adapters.base import Adapter
 from ..adapters.registry import available_adapters
-from ..collector.first_run import IngestStatus, run_first_pass_ingest
+from ..collector.first_run import (
+    IngestStatus,
+    join_first_run_threads,
+    run_first_pass_ingest,
+)
+from ..collector.search_backfill import (
+    join_search_backfill_threads,
+    request_search_backfill_stop,
+)
 from ..collector.scheduler import start_scheduler
 from ..collector.watcher import start_watcher
 from ..detectors.registry import available_detectors
@@ -40,6 +48,10 @@ class NoAdaptersError(RuntimeError):
 
 
 class CoreRuntime:
+    #: How long stop() waits for background writer threads before giving up
+    #: on closing the DB (seconds, per phase).
+    writer_join_timeout: float = 10.0
+
     def __init__(
         self,
         data_dir: Path,
@@ -143,17 +155,29 @@ class CoreRuntime:
         if self._watcher is not None:
             self._watcher.stop()
             self._watcher = None
+        # Background writers share the SQLite connection: first-run's
+        # background phase and the search-index backfill. Ask both to stop
+        # after their current file, then wait. Closing a sqlite3 connection
+        # another thread is using is undefined behaviour — it crashed the
+        # process (access violation / exit 139), not a clean error.
         if self._first_run is not None:
-            # Let the background backfill thread finish so it can't write to a
-            # closed DB. Returns instantly if already done; bounded so a huge
-            # backfill can't hang shutdown indefinitely.
-            #
-            # join() rather than wait_backfill(): the event is set as the
-            # thread's last statement, leaving a window where it is still
-            # unwinding. Narrow, but the failure mode is a segfault, not an
-            # exception — worth closing properly.
-            self._first_run.join(timeout=10)
-            self._first_run = None
+            self._first_run.request_stop()
+        request_search_backfill_stop()
+        stuck = join_first_run_threads(self.writer_join_timeout) + join_search_backfill_threads(
+            self.writer_join_timeout
+        )
+        self._first_run = None
         if self._db is not None:
-            self._db.close()
+            if stuck:
+                # Better to leak the handle to process exit (the OS reclaims
+                # it; SQLite's WAL keeps the DB consistent) than to close it
+                # under a live writer.
+                logger.warning(
+                    "Writer thread(s) still running after %.0fs: %s. Leaving the "
+                    "database open; it is released when the process exits.",
+                    self.writer_join_timeout,
+                    ", ".join(stuck),
+                )
+            else:
+                self._db.close()
             self._db = None
