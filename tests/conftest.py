@@ -10,6 +10,7 @@ from argus.schema.types import Alert, Session, Turn
 from argus.store.db import open_db
 from argus.store.repository import Repository
 from argus.collector.first_run import join_first_run_threads
+from argus.collector.search_backfill import join_search_backfill_threads
 
 
 # ─── Fixtures ─────────────────────────────────────────────────────────
@@ -30,7 +31,8 @@ def db(db_path: Path):
     # The guard lives here, at the one place that closes the connection, so a
     # test that starts first-run cannot reintroduce the race by forgetting to
     # wait. CoreRuntime.stop() does the equivalent for production.
-    stuck = join_first_run_threads(timeout=10)
+    # The search-index backfill writes to it too (same hazard).
+    stuck = join_first_run_threads(timeout=10) + join_search_backfill_threads(timeout=10)
     conn.close()
     assert not stuck, f"first-run thread still running at teardown: {stuck}"
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -93,7 +94,12 @@ class FirstRunHandle:
         self._lock = threading.Lock()
         self._foreground_done = threading.Event()
         self._backfill_done = threading.Event()
+        self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+
+    def request_stop(self) -> None:
+        """Ask the background phase to stop after the file it is on."""
+        self._stop.set()
 
     def _inc(self) -> None:
         with self._lock:
@@ -197,6 +203,8 @@ def run_first_pass_ingest(
     # Phase 2 (background) — older files + missing-data backfill.
     def _background() -> None:
         for adapter, file in older:
+            if handle._stop.is_set():
+                break
             try:
                 ingest_file(adapter, file, repo, table)
             except Exception as e:  # noqa: BLE001
@@ -209,8 +217,12 @@ def run_first_pass_ingest(
                     }
                 )
             handle._inc()
-        _repair_fork_duplicates_once(adapters, repo, table)
-        _backfill_missing_derived_data(adapters, repo, table)
+        if not handle._stop.is_set():
+            _repair_fork_duplicates_once(adapters, repo, table)
+        if not handle._stop.is_set():
+            _backfill_missing_derived_data(
+                adapters, repo, table, should_stop=handle._stop.is_set
+            )
         handle._backfill_done.set()
 
     thread = threading.Thread(
@@ -339,7 +351,11 @@ def _stale_on_disk(
 
 
 def _backfill_missing_derived_data(
-    adapters: list[Adapter], repo: Repository, table: PricingTable
+    adapters: list[Adapter],
+    repo: Repository,
+    table: PricingTable,
+    *,
+    should_stop: Callable[[], bool] = lambda: False,
 ) -> None:
     """Re-ingest sessions missing tool_calls / segments after a slice upgrade."""
     missing_tools = repo.sessions_missing_tool_calls(BACKFILL_CAP)
@@ -397,7 +413,9 @@ def _backfill_missing_derived_data(
     if agent_fix_pending and len(candidates) < BACKFILL_CAP:
         repo.set_app_meta(agent_fix_key, "1")
 
-    _reread(candidates, deep_reset, file_by_basename, repo, table)
+    _reread(candidates, deep_reset, file_by_basename, repo, table, should_stop)
+    if should_stop():
+        return  # interrupted: don't judge sweep completion on a partial run
 
     # A sweep is done only when nothing it still needs remains — checked
     # AFTER the work, so a capped run can't mark it done early. A re-ingest
@@ -415,9 +433,12 @@ def _reread(
     file_by_basename: dict[str, tuple[Adapter, Path]],
     repo: Repository,
     table: PricingTable,
+    should_stop: Callable[[], bool] = lambda: False,
 ) -> None:
     """Reset offsets to 0 and re-ingest each candidate's file."""
     for id_ in candidates:
+        if should_stop():
+            return
         if "/" in id_:  # sub-agent rollup ids — walked via parents
             continue
         colon = id_.find(":")

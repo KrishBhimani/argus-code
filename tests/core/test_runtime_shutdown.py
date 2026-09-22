@@ -1,0 +1,158 @@
+"""Shutdown must not close SQLite under a live writer thread (H5).
+
+REGRESSION: CoreRuntime.stop() joined first-run with a 10 s timeout, ignored the
+result, never joined the ``argus-search-backfill`` thread, then closed the
+shared connection. Closing a sqlite3 connection another thread is using is
+undefined behaviour — reproduced as an access violation / exit 139 in
+repository.upsert_turn <- pipeline.ingest_file <- search_backfill.
+"""
+from __future__ import annotations
+
+import threading
+import time
+from pathlib import Path
+
+from argus.collector import search_backfill
+from argus.collector.search_backfill import (
+    SEARCH_BACKFILL_THREAD_NAME,
+    join_search_backfill_threads,
+    run_segment_backfill,
+)
+from argus.core.runtime import CoreRuntime
+
+
+class _DBProxy:
+    def __init__(self, calls: list[str]):
+        self.calls = calls
+
+    def close(self) -> None:
+        self.calls.append("db.close")
+
+
+def test_stop_waits_for_search_backfill_before_closing(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    def writer() -> None:
+        time.sleep(0.3)
+        calls.append("backfill done")
+
+    t = threading.Thread(target=writer, name=SEARCH_BACKFILL_THREAD_NAME, daemon=True)
+    t.start()
+    rt = CoreRuntime(tmp_path)
+    rt._db = _DBProxy(calls)
+    rt.stop()
+    assert calls == ["backfill done", "db.close"]
+
+
+def test_stop_skips_close_while_a_writer_is_stuck(tmp_path: Path, caplog) -> None:
+    calls: list[str] = []
+    release = threading.Event()
+    t = threading.Thread(target=lambda: release.wait(10), name=SEARCH_BACKFILL_THREAD_NAME,
+                         daemon=True)
+    t.start()
+    try:
+        rt = CoreRuntime(tmp_path)
+        rt.writer_join_timeout = 0.2
+        rt._db = _DBProxy(calls)
+        rt.stop()
+        assert calls == []  # never closed under the live writer
+        assert any("still running" in r.getMessage() for r in caplog.records)
+    finally:
+        release.set()
+        t.join(5)
+
+
+class _FakeAdapter:
+    agent = "claude_code"
+
+    def __init__(self, files: list[Path], discover_hook=None):
+        self.files = files
+        self.discover_hook = discover_hook
+        self.discover_calls = 0
+
+    def discover_session_files(self) -> list[Path]:
+        self.discover_calls += 1
+        if self.discover_hook:
+            self.discover_hook(self.discover_calls)
+        return self.files
+
+
+class _FakeRepo:
+    def __init__(self, ids: list[str]):
+        self.ids = ids
+
+    def sessions_missing_segments(self, limit: int):
+        return [{"id": i} for i in self.ids][:limit]
+
+    def set_file_offset(self, path, offset): ...
+
+    def record_parse_error(self, e): ...
+
+
+def test_search_backfill_stops_when_asked(monkeypatch) -> None:
+    n = 50
+    files = [Path(f"/x/s{i}.jsonl") for i in range(n)]
+    ingested: list[Path] = []
+
+    def slow_ingest(adapter, file, repo, table):
+        time.sleep(0.02)
+        ingested.append(file)
+
+    monkeypatch.setattr(search_backfill, "ingest_file", slow_ingest)
+    run_segment_backfill([_FakeAdapter(files)], _FakeRepo([f"claude_code:s{i}" for i in range(n)]), None)
+    time.sleep(0.1)
+    search_backfill.request_search_backfill_stop()
+    assert join_search_backfill_threads(timeout=5) == []
+    assert 0 < len(ingested) < n
+    assert search_backfill.get_search_backfill_status().in_progress is False
+
+
+def test_concurrent_enable_requests_start_one_worker(monkeypatch) -> None:
+    """REGRESSION: in_progress was checked, the lock released, and set only
+    after discovery — two concurrent enable requests both started a worker."""
+    entered, release = threading.Event(), threading.Event()
+
+    def hook(call: int) -> None:
+        if call == 1:  # first request is mid-discovery while the second arrives
+            entered.set()
+            release.wait(5)
+
+    monkeypatch.setattr(search_backfill, "ingest_file", lambda *a: None)
+    adapter = _FakeAdapter([Path("/x/s0.jsonl")], discover_hook=hook)
+    repo = _FakeRepo(["claude_code:s0"])
+    first = threading.Thread(target=run_segment_backfill, args=([adapter], repo, None))
+    first.start()
+    assert entered.wait(5)
+    run_segment_backfill([adapter], repo, None)  # second, concurrent request
+    release.set()
+    first.join(5)
+    assert join_search_backfill_threads(timeout=5) == []
+    assert adapter.discover_calls == 1
+
+
+def test_first_run_background_stops_when_asked(tmp_path: Path, repo, monkeypatch) -> None:
+    import json
+
+    from argus.adapters.claude_code.adapter import ClaudeCodeAdapter
+    from argus.collector import first_run
+    from argus.pricing.load import load_pricing_table
+
+    root = tmp_path / ".claude"
+    proj = root / "projects" / "-p"
+    proj.mkdir(parents=True)
+    for i in range(40):
+        (proj / f"s{i}.jsonl").write_text(json.dumps({"type": "user"}) + "\n", encoding="utf-8")
+    seen: list[Path] = []
+
+    def slow_ingest(adapter, file, repo_, table):
+        time.sleep(0.02)
+        seen.append(file)
+
+    monkeypatch.setattr(first_run, "ingest_file", slow_ingest)
+    # recent_days=-1: every file is "older", i.e. handled by the background thread.
+    handle = first_run.run_first_pass_ingest([ClaudeCodeAdapter(root)], repo,
+                                             load_pricing_table(), recent_days=-1)
+    time.sleep(0.1)
+    handle.request_stop()
+    assert handle.join(timeout=5)
+    assert 0 < len(seen) < 40
