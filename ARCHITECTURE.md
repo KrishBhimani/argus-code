@@ -174,11 +174,33 @@ Rules that matter:
   side-effect in `python/argus/detectors/__init__.py` — same pattern as
   adapters. Adding one is a new file + the import line; no scheduler edits.
 
-The v1 detector (`tool_error_rate_spike`) compares each tool's last-7-day
-error rate against its preceding 4-week baseline and fires when the rate
-multiplies past a threshold — or breaks from a zero baseline. Cost was
-deliberately *not* the v1 signal: it's meaningless for Pro/Max users who
-don't pay per token.
+Three detectors ship today. All of them compare a trailing 7-day **window**
+against the 28 days immediately before it (the **baseline**), and all of them
+gate on a volume floor so a quiet week can't fire:
+
+| Detector | Keyed on | Fires when |
+|---|---|---|
+| `tool_error_rate_spike` | tool name | the window error rate is >= 2x the baseline rate (or breaks from a zero baseline) |
+| `cost_spike` | project path | window spend is >= 2x the baseline's *per-week* average |
+| `cache_hit_drop` | project path | the input-token cache hit rate falls >= 15 points below baseline |
+
+Notes that shape those rules:
+
+- **The baseline is four weeks long, so cost is compared per week**, not per
+  window — otherwise every project looks cheaper than its own history.
+- **Cost was deliberately not the v1 signal:** it's meaningless as *money* for
+  Pro/Max users who don't pay per token. It survives as a v2 signal because it
+  still tracks how much work the agent did; the absolute dollar floors keep
+  small projects quiet.
+- **`cache_hit_drop` divides by input tokens only** (`cache_read / (cache_read +
+  cache_write + fresh_input)`), unlike the dashboard's "cache read share" which
+  divides by all tokens. Output volume is not a caching regression, and cache
+  *writes* are exactly what a miss looks like. It measures the fall in
+  percentage points, not as a ratio: near the top of the range a ratio hides the
+  damage (96% -> 90% doubles the uncached input but reads as "0.94x").
+- Both project-keyed detectors read one aggregate,
+  `Repository.project_turn_stats_in_range`, which attributes sub-agent turns to
+  the parent session's project.
 
 ## Scaffolding (`argus claude`)
 
