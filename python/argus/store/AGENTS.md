@@ -15,7 +15,7 @@ migrations; `repository.py` is the typed read/write API over SQLite.
   of user rows to "fix" a schema. Add a new migration by appending `(N, MIGRATION_00N)`
   to the versioned list with the next number.
 - **The one sanctioned delete of ingested rows is fork de-duplication**
-  (`delete_duplicated_turns`): turns/tool calls that a forked session stored as
+  (`delete_duplicated_turns`, `delete_fork_copy_turns`): turns/tool calls that a forked session stored as
   copies of *another stored session's* messages. It removes derived duplicates
   only — the origin session keeps the rows, the session row itself stays — and
   callers must verify each copy first (see `collector/AGENTS.md`). Don't widen it

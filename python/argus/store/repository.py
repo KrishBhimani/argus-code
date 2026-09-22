@@ -284,6 +284,18 @@ class Repository:
             "DELETE FROM tool_calls WHERE id = ?", [(f"{session_id}:{t}",) for t in tool_use_ids]
         )
 
+    def delete_fork_copy_turns(self, session_id: str, copies: list[Turn]) -> None:
+        """Delete tagged fork copies and their calls (matched by turn sequence).
+
+        Same sanctioned scope as ``delete_duplicated_turns``; for rows written
+        by the fork-aware ingest, whose ``turn_index`` is unambiguous.
+        """
+        self.db.executemany("DELETE FROM turns WHERE id = ?", [(t.id,) for t in copies])
+        self.db.executemany(
+            "DELETE FROM tool_calls WHERE session_id = ? AND turn_index = ?",
+            [(session_id, t.sequence) for t in copies],
+        )
+
     def get_turns_for_session(self, session_id: str) -> list[Turn]:
         rows = self.db.execute(
             "SELECT * FROM turns WHERE session_id = ? ORDER BY sequence",
