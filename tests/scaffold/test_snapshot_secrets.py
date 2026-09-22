@@ -201,7 +201,8 @@ def test_symlinked_subfolder_is_not_followed(tmp_path: Path):
     target = snapshot_template(proj, "t", tmp_path / "data", include_subdirs=["skills"])
 
     assert not (target / ".claude" / "skills").exists()
-    assert "skills" in secret_files_in(proj / ".claude", include_subdirs=["skills"])
+    withheld = secret_files_in(proj / ".claude", include_subdirs=["skills"])
+    assert withheld.count("skills") == 1  # reported once, not by both passes
 
 
 def test_cli_reports_nested_withheld_files(tmp_path: Path):

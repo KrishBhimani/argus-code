@@ -103,8 +103,10 @@ def plan_snapshot(claude: Path, include_subdirs: list[str] | tuple[str, ...] = (
         # Links first: a link out of the tree must not have its target's
         # contents pulled in (copying dereferences).
         if _is_link(p):
-            if p.name in include_subdirs or not p.is_dir():
-                plan.withheld.append(p.name)
+            # A linked *chosen* subfolder is reported by _walk below.
+            if p.name not in include_subdirs:
+                if not p.is_dir():
+                    plan.withheld.append(p.name)
             continue
         if not p.is_file() or p.name in _EXCLUDED_TOP_FILE_NAMES:
             continue
