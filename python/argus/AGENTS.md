@@ -23,6 +23,14 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   A new background thread that writes to the connection must get the same
   stop-event + name-based join and be added here and to the `db` test fixture.
 - `daemon/` — `argusd` background service: pidfile, process lifecycle, logging.
+  **Never act on a bare PID.** The pidfile stores `{"pid", "start"}` (process
+  start time: `/proc/<pid>/stat` field 22 / `ps -o lstart=` / Windows
+  `GetProcessTimes`); every "is argusd running?" decision (stop, collision guard,
+  `argus start` read-only mode, `daemon status`) goes through
+  `pidfile.live_pid()` / `is_ours()`, which require the same PID *and* start
+  time. Legacy bare-PID files are trusted only if the process's command line is
+  argusd's (POSIX); otherwise they are stale and never signalled. The Windows
+  branch is unit-tested with a fake `kernel32`, not exercised on Windows in CI.
 - `detectors/` — alert detectors (registry + individual rules like tool-error-rate spike).
 - `pricing/` — pricing table load / refresh / compute; bundled JSON under repo `pricing/`.
 - `scaffold/` — `argus claude` scaffolding (templates, snapshot, storage).

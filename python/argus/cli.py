@@ -98,15 +98,16 @@ def start(
     from .core.runtime import CoreRuntime, NoAdaptersError
     from .daemon import pidfile
 
-    daemon_pid = pidfile.read(data_dir)
-    if daemon_pid is not None and pidfile.is_running(daemon_pid):
+    daemon_pid = pidfile.live_pid(data_dir)
+    if daemon_pid is not None:
         read_only = True
         logger.info("argusd %d active — dashboard is read-only.", daemon_pid)
     else:
         read_only = False
-        if daemon_pid is not None:
+        stale_pid = pidfile.read(data_dir)
+        if stale_pid is not None:
             logger.info(
-                "Stale argusd PID file (process %d gone) — ignoring.", daemon_pid
+                "Stale argusd PID file (PID %d is not argusd) — ignoring.", stale_pid
             )
 
     runtime = CoreRuntime(data_dir, read_only=read_only)
@@ -419,12 +420,13 @@ def daemon_start(
     from .daemon import pidfile
     from .daemon.process import spawn_daemon, wait_for_pidfile
 
-    existing = pidfile.read(data_dir)
-    if existing is not None and pidfile.is_running(existing):
+    existing = pidfile.live_pid(data_dir)
+    if existing is not None:
         typer.echo(f"daemon already running, PID {existing}")
         raise typer.Exit(code=0)
-    if existing is not None:
-        typer.echo(f"Clearing stale PID file (process {existing} gone).")
+    stale = pidfile.read(data_dir)
+    if stale is not None:
+        typer.echo(f"Clearing stale PID file (PID {stale} is not argusd).")
         pidfile.remove(data_dir)
 
     spawn_daemon(data_dir)
@@ -477,10 +479,11 @@ def daemon_status(
     from .daemon import pidfile
     from .daemon.logging import log_path
 
-    pid = pidfile.read(data_dir)
-    if pid is None or not pidfile.is_running(pid):
-        if pid is not None:
-            typer.echo(f"argusd: not running (stale PID file for {pid}).")
+    pid = pidfile.live_pid(data_dir)
+    if pid is None:
+        stale = pidfile.read(data_dir)
+        if stale is not None:
+            typer.echo(f"argusd: not running (stale PID file for {stale}).")
         else:
             typer.echo("argusd: not running.")
         raise typer.Exit(code=0)
