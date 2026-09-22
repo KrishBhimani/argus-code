@@ -82,6 +82,8 @@ export const Overview = z.object({
   tokens_by_day: z.record(z.number()),
   tokens_by_model: z.record(z.number()),
   top_sessions: z.array(TopSession),
+  /** Same metrics over the equal-length range right before the window; null for "all". */
+  prior_window: z.object({ tokens: z.number(), cost_usd: z.number(), sessions: z.number() }).nullable(),
 });
 export type Overview = z.infer<typeof Overview>;
 

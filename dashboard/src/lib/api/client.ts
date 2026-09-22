@@ -5,6 +5,12 @@ export type Window = '24h' | '7d' | '30d' | 'all';
 export const WINDOWS: Window[] = ['24h', '7d', '30d', 'all'];
 /** The server names the first window "today". */
 export const toServerWindow = (w: Window): string => (w === '24h' ? 'today' : w);
+/**
+ * Viewer's UTC offset in minutes east (IST = 330). Day-bucketed endpoints take it
+ * so the server's day keys are the viewer's local dates — the same keys
+ * `dayKeys()` builds. Read per request so a DST change mid-session is honoured.
+ */
+export const tzOffsetMin = (): number => -new Date().getTimezoneOffset();
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -30,7 +36,7 @@ async function post<T>(path: string, schema: z.ZodType<T, z.ZodTypeDef, unknown>
 const enc = encodeURIComponent;
 
 export const api = {
-  overview: (w: Window) => get(`/api/overview?window=${toServerWindow(w)}`, S.Overview),
+  overview: (w: Window) => get(`/api/overview?window=${toServerWindow(w)}&tz=${tzOffsetMin()}`, S.Overview),
   sessions: (limit = 100_000) => get(`/api/sessions?limit=${limit}`, S.SessionList),
   session: (id: string) => get(`/api/sessions/${enc(id)}`, S.SessionDetail),
   timeline: (id: string) => get(`/api/sessions/${enc(id)}/timeline`, S.Timeline),
@@ -40,7 +46,7 @@ export const api = {
     get(`/api/sessions/${enc(id)}/transcript?q=${enc(q)}&limit=${limit}`, S.TranscriptSearch),
   toolsOverview: (w: Window) => get(`/api/tools/overview?window=${toServerWindow(w)}`, S.ToolsOverview),
   trends: (granularity: 'day' | 'week' | 'month', groupBy: 'model' | 'agent') =>
-    get(`/api/trends?granularity=${granularity}&groupBy=${groupBy}`, S.TrendsResponse),
+    get(`/api/trends?granularity=${granularity}&groupBy=${groupBy}&tz=${tzOffsetMin()}`, S.TrendsResponse),
   alerts: (limit = 50) => get(`/api/alerts?limit=${limit}`, S.AlertList),
   unseenAlerts: () => get('/api/alerts/unseen', S.AlertList),
   markAlertSeen: (id: number) => post(`/api/alerts/${id}/seen`, z.unknown()),

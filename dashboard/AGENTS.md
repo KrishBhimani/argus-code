@@ -53,6 +53,12 @@ analyses in `src/lib/analysis/`.
   every chart: orange is UI accent only, single-series data is blue, status
   colours always pair with an icon + label, one y-axis per chart, legend for ≥2
   series, every chart has a table view.
+- **Day keys are local dates, and the server is asked for local days.**
+  `dayKeys()` builds the viewer's local `YYYY-MM-DD`; every day-bucketed request
+  (`api.overview`, `api.trends`) passes `tz=${tzOffsetMin()}` so the server's
+  maps use the same keys. "vs prior window" deltas come from the server's
+  `prior_window` — don't re-derive them from per-day maps. Tests that depend on
+  the timezone pin `TZ` (see `src/lib/api/timezone.test.ts`, IST near midnight).
 - **Derived analyses are pure and unit-tested** (`src/lib/analysis/`, plus
   `features/tools/toolsOverTime.ts`). Each function that would scale better as a
   server aggregate carries a `// candidate-endpoint:` comment — that list seeds

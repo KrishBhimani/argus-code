@@ -35,15 +35,3 @@ export function inWindow(sessions: Session[], w: Window, today: Date): Session[]
   start.setDate(start.getDate() - (n - 1));
   return sessions.filter((s) => new Date(s.started_at) >= start);
 }
-
-/** Sessions started in the equal-length window immediately before the current one; null for `all`. */
-export function priorWindowSessions(sessions: Session[], w: Window, today: Date): Session[] | null {
-  const n = windowDays(w);
-  if (n == null) return null;
-  const end = new Date(today);
-  end.setHours(0, 0, 0, 0);
-  end.setDate(end.getDate() - (n - 1)); // start of current window (exclusive upper bound)
-  const start = new Date(end);
-  start.setDate(start.getDate() - n);
-  return sessions.filter((s) => { const d = new Date(s.started_at); return d >= start && d < end; });
-}
