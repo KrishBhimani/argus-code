@@ -7,7 +7,7 @@ fixed in follow-up commits.
 
 ## Publishing
 
-All branches are pushed to `origin` and PRs #27–#35 are open (none merged). The
+All branches are pushed to `origin`, PRs #27–#35 are open (none merged), and each fixes a tracking issue #36–#44 (labels `bug`, `severity: high`; PRs into `main` auto-close theirs, #44 must be closed by hand when #35 lands). The
 first run had no GitHub credentials; branches were pushed and PRs opened once the
 maintainer logged in. Stacked PRs (#29 → #30 → #31 → #34) target `main` and begin
 with "Depends on #n"; #35 targets `feat/codex-adapter`.
@@ -18,17 +18,17 @@ AI co-author trailer, per the maintainer's rule.
 
 ## Results
 
-| Item | Branch | Base | PR | Status | Summary |
-|---|---|---|---|---|---|
-| H1 incremental ingest | `fix/incremental-ingest` | main | [#27](https://github.com/KrishBhimani/argus-code/pull/27) | opened | Chunked ingest == one-pass: byte-offset sequences, split-message merge (idempotent), errors applied by id, stored project/start kept; repairs `repair_session_duration_v1` + `backfill_tool_errors_v1` |
-| H3 pricing | `fix/pricing-current-models` | main | [#28](https://github.com/KrishBhimani/argus-code/pull/28) | opened | Bundled `2026-09-22.json` adds opus-5 / opus-5-5 / sonnet-5 / fable-5-1 (Anthropic prices); refresh writes `<data-dir>/pricing`, newest table wins; unknown model logged once |
-| H2 fork double count | `fix/fork-double-count` | H1 | [#29](https://github.com/KrishBhimani/argus-code/pull/29) | opened | Copied parent turns dropped when the origin stores them; order-independent reclaim; `MIGRATION_007` index; `repair_fork_duplicates_v1` (targeted delete of verified duplicate derived rows) |
-| H4 transactions | `fix/store-transactions` | H2 | [#30](https://github.com/KrishBhimani/argus-code/pull/30) | opened | `Repository.transaction()` (BEGIN IMMEDIATE/SAVEPOINT, per-connection RLock); every write locked; ingest rows + offset atomic; 3,000 calls 2.18 s → 0.012 s |
-| H5 shutdown | `fix/shutdown-join-writers` | H4 | [#31](https://github.com/KrishBhimani/argus-code/pull/31) | opened | Stop events + name-based joins for first-run and search backfill; skip `close()` if a writer is still alive; one-worker backfill claim; fixed a latent lock deadlock |
-| H6 pidfile identity | `fix/pidfile-identity` | main | [#32](https://github.com/KrishBhimani/argus-code/pull/32) | opened | PID + start time; VERIFIED/STALE/UNVERIFIED; only verified argusd is ever killed; legacy bare-PID files handled |
-| H7 template secrets | `fix/template-secrets` | main | [#33](https://github.com/KrishBhimani/argus-code/pull/33) | opened | One link-safe walk for copy + "left out" report; nested secrets/`*.local.json`/symlinks/junctions skipped; more credential names |
-| H8 day buckets | `fix/dashboard-day-buckets` | H5 | [#34](https://github.com/KrishBhimani/argus-code/pull/34) | opened | Server buckets days in the viewer's `tz`; `/api/overview.prior_window`; dashboard uses both; Tile "new"; rebuilt `dashboard-dist` |
-| Codex H1 | `fix/codex-incremental-ingest` | `feat/codex-adapter` | [#35](https://github.com/KrishBhimani/argus-code/pull/35) | opened | Byte-offset sequences, errors by id across holdback, child links survive a second refresh |
+| Item | Issue | Branch | Base | PR | Status | Summary |
+|---|---|---|---|---|---|---|
+| H1 incremental ingest | [#36](https://github.com/KrishBhimani/argus-code/issues/36) | `fix/incremental-ingest` | main | [#27](https://github.com/KrishBhimani/argus-code/pull/27) | opened | Chunked ingest == one-pass: byte-offset sequences, split-message merge (idempotent), errors applied by id, stored project/start kept; repairs `repair_session_duration_v1` + `backfill_tool_errors_v1` |
+| H3 pricing | [#37](https://github.com/KrishBhimani/argus-code/issues/37) | `fix/pricing-current-models` | main | [#28](https://github.com/KrishBhimani/argus-code/pull/28) | opened | Bundled `2026-09-22.json` adds opus-5 / opus-5-5 / sonnet-5 / fable-5-1 (Anthropic prices); refresh writes `<data-dir>/pricing`, newest table wins; unknown model logged once |
+| H2 fork double count | [#38](https://github.com/KrishBhimani/argus-code/issues/38) | `fix/fork-double-count` | H1 | [#29](https://github.com/KrishBhimani/argus-code/pull/29) | opened | Copied parent turns dropped when the origin stores them; order-independent reclaim; `MIGRATION_007` index; `repair_fork_duplicates_v1` (targeted delete of verified duplicate derived rows) |
+| H4 transactions | [#39](https://github.com/KrishBhimani/argus-code/issues/39) | `fix/store-transactions` | H2 | [#30](https://github.com/KrishBhimani/argus-code/pull/30) | opened | `Repository.transaction()` (BEGIN IMMEDIATE/SAVEPOINT, per-connection RLock); every write locked; ingest rows + offset atomic; 3,000 calls 2.18 s → 0.012 s |
+| H5 shutdown | [#40](https://github.com/KrishBhimani/argus-code/issues/40) | `fix/shutdown-join-writers` | H4 | [#31](https://github.com/KrishBhimani/argus-code/pull/31) | opened | Stop events + name-based joins for first-run and search backfill; skip `close()` if a writer is still alive; one-worker backfill claim; fixed a latent lock deadlock |
+| H6 pidfile identity | [#41](https://github.com/KrishBhimani/argus-code/issues/41) | `fix/pidfile-identity` | main | [#32](https://github.com/KrishBhimani/argus-code/pull/32) | opened | PID + start time; VERIFIED/STALE/UNVERIFIED; only verified argusd is ever killed; legacy bare-PID files handled |
+| H7 template secrets | [#42](https://github.com/KrishBhimani/argus-code/issues/42) | `fix/template-secrets` | main | [#33](https://github.com/KrishBhimani/argus-code/pull/33) | opened | One link-safe walk for copy + "left out" report; nested secrets/`*.local.json`/symlinks/junctions skipped; more credential names |
+| H8 day buckets | [#43](https://github.com/KrishBhimani/argus-code/issues/43) | `fix/dashboard-day-buckets` | H5 | [#34](https://github.com/KrishBhimani/argus-code/pull/34) | opened | Server buckets days in the viewer's `tz`; `/api/overview.prior_window`; dashboard uses both; Tile "new"; rebuilt `dashboard-dist` |
+| Codex H1 | [#44](https://github.com/KrishBhimani/argus-code/issues/44) | `fix/codex-incremental-ingest` | `feat/codex-adapter` | [#35](https://github.com/KrishBhimani/argus-code/pull/35) | opened | Byte-offset sequences, errors by id across holdback, child links survive a second refresh |
 
 No item was skipped or draft-blocked.
 
