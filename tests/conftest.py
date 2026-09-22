@@ -216,3 +216,37 @@ def pytest_runtest_logfinish(nodeid, location):
     names = sorted(t.name for t in _th.enumerate())
     _sys.__stderr__.write(f"<<< END {nodeid} threads={names}\n")
     _sys.__stderr__.flush()
+
+
+# DIAGNOSTIC ONLY: per-thread call trace into argus code during the suspect test.
+import time as _time
+
+_T0 = [0.0]
+
+
+def _prof(frame, event, arg):
+    if event != "call":
+        return
+    fn = frame.f_code.co_filename
+    if "argus" not in fn or "tests" in fn:
+        return
+    _sys.__stderr__.write(
+        f"  [{_time.perf_counter() - _T0[0]:7.3f}] {_th.current_thread().name}: "
+        f"{fn.rsplit(chr(92), 1)[-1].rsplit('/', 1)[-1]}:{frame.f_code.co_name}\n"
+    )
+    _sys.__stderr__.flush()
+
+
+def pytest_runtest_setup(item):
+    if item.name == "test_daemon_activates_once_claude_appears":
+        _T0[0] = _time.perf_counter()
+        _th.setprofile_all_threads(_prof) if hasattr(_th, "setprofile_all_threads") else _th.setprofile(_prof)
+        _sys.setprofile(_prof)
+
+
+def pytest_runtest_teardown(item):
+    if item.name == "test_daemon_activates_once_claude_appears":
+        _sys.setprofile(None)
+        if hasattr(_th, "setprofile_all_threads"):
+            _th.setprofile_all_threads(None)
+        _th.setprofile(None)
