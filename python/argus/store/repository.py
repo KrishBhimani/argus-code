@@ -663,20 +663,25 @@ class Repository:
             "errors": row["errors"] if row else 0,
         }
 
-    def aggregate_turns_by_day(self, cutoff_iso: str) -> list[dict[str, Any]]:
+    def aggregate_turns_by_day(
+        self, cutoff_iso: str, tz_offset_min: int = 0
+    ) -> list[dict[str, Any]]:
         """Per-turn aggregation for windowed views.
 
         Returns one row per (day, model, session_id) inside the cutoff.
-        Sub-agent rollup ids look like ``parent/sub``; their turns are
-        attributed to the parent id (the part before the first ``/``) so
-        windowed totals match the session detail page, whose stored totals
-        already include the sub-agent rollup.
+        ``day`` is the calendar date at ``tz_offset_min`` minutes east of UTC —
+        the viewer's timezone — so the dashboard's local date keys match (a
+        UTC day made the chart plot 0 for "today" between local midnight and
+        the UTC rollover). Sub-agent rollup ids look like ``parent/sub``; their
+        turns are attributed to the parent id (the part before the first
+        ``/``) so windowed totals match the session detail page, whose stored
+        totals already include the sub-agent rollup.
         """
         rows = self.db.execute(
             """
             WITH t AS (
               SELECT
-                substr(timestamp, 1, 10) AS day,
+                COALESCE(date(timestamp, ?), substr(timestamp, 1, 10)) AS day,
                 model,
                 CASE
                   WHEN instr(session_id, '/') > 0
@@ -701,9 +706,33 @@ class Repository:
             GROUP BY day, model, session_id
             ORDER BY day ASC
             """,
-            (cutoff_iso,),
+            (f"{int(tz_offset_min):+d} minutes", cutoff_iso),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def turn_totals_between(self, start_iso: str, end_iso: str) -> dict[str, Any]:
+        """Tokens, cost and active top-level sessions for ``start <= ts < end``.
+
+        Same definitions as the windowed overview (sessions = sessions with a
+        turn in the range, sub-agents folded into their parent), so a
+        "vs prior window" delta compares like with like.
+        """
+        row = self.db.execute(
+            """
+            SELECT
+              COALESCE(SUM(fresh_input_tokens + output_tokens
+                           + cache_read_tokens + cache_write_tokens), 0) AS tokens,
+              COALESCE(SUM(cost_usd), 0) AS cost_usd,
+              COUNT(DISTINCT CASE
+                WHEN instr(session_id, '/') > 0
+                THEN substr(session_id, 1, instr(session_id, '/') - 1)
+                ELSE session_id END) AS sessions
+            FROM turns
+            WHERE timestamp >= ? AND timestamp < ?
+            """,
+            (start_iso, end_iso),
+        ).fetchone()
+        return {"tokens": row["tokens"], "cost_usd": row["cost_usd"], "sessions": row["sessions"]}
 
     def mcp_tool_calls(self, cutoff_iso: str) -> list[dict[str, Any]]:
         rows = self.db.execute(

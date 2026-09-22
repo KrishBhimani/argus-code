@@ -23,8 +23,18 @@ the `/api/...` routes over the repository.
 - **Aggregate reads are memoised** (`_ReadCache` in `api.py`): `/api/overview`,
   `/api/trends`, `/api/tools/overview` cache per argument set and are invalidated
   by a data fingerprint (row counts / max rowids of sessions, turns, tool_calls and
-  sessions.max(computed_at)). If you make one of those endpoints read a new table,
+  sessions.max(computed_at)). Every query parameter that changes the answer
+  (window, granularity, groupBy, `tz`) must be in the cache key. If you make one of those endpoints read a new table,
   add it to the fingerprint or the cache will serve stale answers.
+- **Days are the viewer's days.** `/api/overview` and `/api/trends` take `tz`
+  (minutes east of UTC, `-Date#getTimezoneOffset()`; ±840) and bucket with
+  `date(timestamp, '+N minutes')` in `aggregate_turns_by_day`, so their day keys
+  equal the dashboard's local `dayKeys()`. `tz` is part of the `_ReadCache` key.
+  Window *cutoffs* stay rolling UTC instants (`now - n days`).
+- **`/api/overview.prior_window`** = `{tokens, cost_usd, sessions}` over
+  `[now - 2n, now - n)` (null for `all`), computed with the same definitions as
+  the window's own totals (`turn_totals_between`). Deltas must use it — summing
+  whole calendar days client-side overlapped the rolling window.
 - **SPA fallback.** The dashboard is client-routed. A `GET` that is not
   `/api/*`, whose last path segment has no extension, and misses the static
   mount returns `dashboard-dist/index.html` (200) via the 404 exception handler

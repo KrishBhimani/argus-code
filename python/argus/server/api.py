@@ -74,13 +74,35 @@ def _week_of(iso: str) -> str:
     return f"{int((diff + js_day_of_week) // 7) + 1:02d}"
 
 
+def _iso_z(dt: datetime) -> str:
+    return dt.isoformat().replace("+00:00", "Z")
+
+
 def _cutoff_iso_for_window(window: str) -> str:
     days = _WINDOWS.get(window)
     if days is None:
         return ""
-    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat().replace(
-        "+00:00", "Z"
-    )
+    return _iso_z(datetime.now(timezone.utc) - timedelta(days=days))
+
+
+def _window_bounds(window: str) -> tuple[str, str | None]:
+    """(cutoff, prior_start) for a rolling window, from one ``now``.
+
+    The prior window is the equal-length range right before the cutoff —
+    ``[now - 2n, now - n)`` — so it never overlaps the current one (summing
+    whole calendar days did, double-counting the current window's first day).
+    ``prior_start`` is None for "all".
+    """
+    days = _WINDOWS.get(window)
+    if days is None:
+        return "", None
+    now = datetime.now(timezone.utc)
+    return _iso_z(now - timedelta(days=days)), _iso_z(now - timedelta(days=2 * days))
+
+
+#: Viewer's UTC offset in minutes east (JS: -Date#getTimezoneOffset()).
+#: Real offsets span UTC-12..UTC+14.
+TZ_QUERY = Query(0, ge=-14 * 60, le=14 * 60)
 
 
 def _mcp_server_name(tool_name: str) -> str | None:
@@ -231,12 +253,15 @@ def build_api(repo: Repository, deps: ApiDeps) -> APIRouter:
         return {"search_enabled": True, "found": text is not None, "text": text}
 
     @api.get("/api/overview")
-    def get_overview(window: str = "7d") -> dict[str, Any]:
-        return cache.get(("overview", window), lambda: _overview(window))
+    def get_overview(window: str = "7d", tz: int = TZ_QUERY) -> dict[str, Any]:
+        return cache.get(("overview", window, tz), lambda: _overview(window, tz))
 
-    def _overview(window: str) -> dict[str, Any]:
-        cutoff = _cutoff_iso_for_window(window)
-        rows = repo.aggregate_turns_by_day(cutoff)
+    def _overview(window: str, tz: int = 0) -> dict[str, Any]:
+        cutoff, prior_start = _window_bounds(window)
+        rows = repo.aggregate_turns_by_day(cutoff, tz)
+        prior_window = (
+            repo.turn_totals_between(prior_start, cutoff) if prior_start is not None else None
+        )
         session_meta: dict[str, Session] = {
             s.id: s for s in repo.list_sessions(limit=100_000)
         }
@@ -307,16 +332,21 @@ def build_api(repo: Repository, deps: ApiDeps) -> APIRouter:
             "tokens_by_day": tokens_by_day,
             "tokens_by_model": tokens_by_model,
             "top_sessions": top_sessions,
+            # Same metrics over the equal-length range just before the window
+            # (null for "all") — the dashboard's "vs prior window" deltas.
+            "prior_window": prior_window,
         }
 
     @api.get("/api/trends")
     def get_trends(
-        granularity: str = "day", groupBy: str = "agent"  # noqa: N803
+        granularity: str = "day", groupBy: str = "agent", tz: int = TZ_QUERY  # noqa: N803
     ) -> dict[str, Any]:
-        return cache.get(("trends", granularity, groupBy), lambda: _trends(granularity, groupBy))
+        return cache.get(
+            ("trends", granularity, groupBy, tz), lambda: _trends(granularity, groupBy, tz)
+        )
 
-    def _trends(granularity: str, groupBy: str) -> dict[str, Any]:  # noqa: N803
-        rows = repo.aggregate_turns_by_day("")
+    def _trends(granularity: str, groupBy: str, tz: int = 0) -> dict[str, Any]:  # noqa: N803
+        rows = repo.aggregate_turns_by_day("", tz)
         session_agent: dict[str, str] = {
             s.id: s.agent for s in repo.list_sessions(limit=100_000)
         }
