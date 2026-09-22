@@ -10,6 +10,10 @@ after a schema/feature upgrade.
 
 ## Local Contracts
 
+- **One transaction per `ingest_file` call.** Rows (session, turns, calls,
+  segments, sub-agents) and the new file offset commit together or not at all
+  (`repo.transaction()`, see `store/AGENTS.md`). Backfills that reset an offset
+  to 0 and re-ingest are two transactions; a crash between them just re-reads.
 - **Offset-driven reads.** `ingest_file` reads only bytes after the stored file
   offset, upserts turns/tool_calls/segments, then recomputes the session. A
   fully-read file sits at EOF and is **not** re-read on the next tick. To force a
