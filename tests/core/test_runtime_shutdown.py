@@ -156,3 +156,23 @@ def test_first_run_background_stops_when_asked(tmp_path: Path, repo, monkeypatch
     handle.request_stop()
     assert handle.join(timeout=5)
     assert 0 < len(seen) < 40
+
+
+def test_interrupted_backfill_does_not_mark_one_shot_fixes_done(tmp_path: Path, repo) -> None:
+    """A shutdown mid-backfill must leave the one-shot flags unset so the
+    remaining work runs next start (the agent-type flag was set before the
+    re-reads, so an interrupted run recorded unfinished work as done)."""
+    from argus.adapters.claude_code.adapter import ClaudeCodeAdapter
+    from argus.collector.first_run import _backfill_missing_derived_data
+    from argus.pricing.load import load_pricing_table
+    from argus.schema.types import ToolCall
+    from tests.conftest import session_factory
+
+    repo.upsert_session(session_factory("claude_code:s1", "2026-05-01T00:00:00Z"))
+    repo.upsert_tool_calls([ToolCall(id="claude_code:s1:a", session_id="claude_code:s1",
+                                     turn_index=0, tool_name="Agent", is_error=0, input_size=1,
+                                     subagent_type=None, timestamp="2026-05-01T00:00:00Z")])
+    (tmp_path / ".claude" / "projects").mkdir(parents=True)
+    _backfill_missing_derived_data([ClaudeCodeAdapter(tmp_path / ".claude")], repo,
+                                   load_pricing_table(), should_stop=lambda: True)
+    assert repo.get_app_meta("backfill_agent_subagent_type_v1") is None
