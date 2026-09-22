@@ -197,3 +197,22 @@ def alert_factory(
         seen_at=seen_at,
         resolved_at=resolved_at,
     )
+
+
+# ─── DIAGNOSTIC ONLY (debug/win313-crash, never merge) ────────────────
+import faulthandler as _fh
+import sys as _sys
+import threading as _th
+
+_fh.enable(file=_sys.__stderr__, all_threads=True)
+
+
+def pytest_runtest_logstart(nodeid, location):
+    _sys.__stderr__.write(f"\n>>> START {nodeid}\n")
+    _sys.__stderr__.flush()
+
+
+def pytest_runtest_logfinish(nodeid, location):
+    names = sorted(t.name for t in _th.enumerate())
+    _sys.__stderr__.write(f"<<< END {nodeid} threads={names}\n")
+    _sys.__stderr__.flush()
