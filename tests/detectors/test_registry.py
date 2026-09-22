@@ -47,8 +47,11 @@ def test_register_returns_class_unchanged():
     assert returned is Original
 
 
-def test_tool_error_rate_spike_is_auto_registered():
-    """Importing argus.detectors triggers tool_error_rate_spike registration."""
+@pytest.mark.parametrize(
+    "name", ["tool_error_rate_spike", "cost_spike", "cache_hit_drop"]
+)
+def test_shipped_detectors_are_auto_registered(name):
+    """Importing argus.detectors triggers every detector's registration."""
     import argus.detectors  # noqa: F401
 
-    assert "tool_error_rate_spike" in registry.registered_detector_names()
+    assert name in registry.registered_detector_names()
