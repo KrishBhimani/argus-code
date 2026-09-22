@@ -201,46 +201,56 @@ def alert_factory(
 
 # ─── DIAGNOSTIC ONLY (debug/win313-crash, never merge) ────────────────
 import faulthandler as _fh
+import os as _os
 import sys as _sys
 import threading as _th
-
-_fh.enable(file=_sys.__stderr__, all_threads=True)
-
-
-def pytest_runtest_logstart(nodeid, location):
-    _sys.__stderr__.write(f"\n>>> START {nodeid}\n")
-    _sys.__stderr__.flush()
-
-
-def pytest_runtest_logfinish(nodeid, location):
-    names = sorted(t.name for t in _th.enumerate())
-    _sys.__stderr__.write(f"<<< END {nodeid} threads={names}\n")
-    _sys.__stderr__.flush()
-
-
-# DIAGNOSTIC ONLY: per-thread call trace into argus code during the suspect test.
 import time as _time
 
+_OUT = [None]  # the terminal's real stderr, saved by pytest's fd capture
 _T0 = [0.0]
 
 
+def pytest_configure(config):
+    capman = config.pluginmanager.getplugin("capturemanager")
+    fd = None
+    try:
+        fd = capman._global_capturing.err.targetfd_save
+    except Exception:  # noqa: BLE001
+        pass
+    _OUT[0] = _os.fdopen(_os.dup(fd if fd is not None else 2), "w", buffering=1)
+    _fh.enable(file=_OUT[0], all_threads=True)
+
+
+def _w(msg):
+    if _OUT[0] is not None:
+        _OUT[0].write(msg)
+        _OUT[0].flush()
+
+
+def pytest_runtest_logstart(nodeid, location):
+    _w(f"\n>>> START {nodeid}\n")
+
+
+def pytest_runtest_logfinish(nodeid, location):
+    _w(f"<<< END {nodeid} threads={sorted(t.name for t in _th.enumerate())}\n")
+
+
 def _prof(frame, event, arg):
-    if event != "call":
+    if event not in ("call", "return"):
         return
-    fn = frame.f_code.co_filename
-    if "argus" not in fn or "tests" in fn:
+    fn = frame.f_code.co_filename.replace(chr(92), "/")
+    if "/python/argus/" not in fn:
         return
-    _sys.__stderr__.write(
-        f"  [{_time.perf_counter() - _T0[0]:7.3f}] {_th.current_thread().name}: "
-        f"{fn.rsplit(chr(92), 1)[-1].rsplit('/', 1)[-1]}:{frame.f_code.co_name}\n"
-    )
-    _sys.__stderr__.flush()
+    _w(f"  [{_time.perf_counter() - _T0[0]:7.3f}] {_th.current_thread().name}: "
+       f"{event} {fn.rsplit('/python/argus/', 1)[-1]}:{frame.f_code.co_name}\n")
 
 
 def pytest_runtest_setup(item):
     if item.name == "test_daemon_activates_once_claude_appears":
         _T0[0] = _time.perf_counter()
-        _th.setprofile_all_threads(_prof) if hasattr(_th, "setprofile_all_threads") else _th.setprofile(_prof)
+        if hasattr(_th, "setprofile_all_threads"):
+            _th.setprofile_all_threads(_prof)
+        _th.setprofile(_prof)
         _sys.setprofile(_prof)
 
 
