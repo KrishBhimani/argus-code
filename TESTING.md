@@ -174,6 +174,13 @@ log directory:
 - `backfill_tool_errors_v1` re-reads every session on disk once; its flag only
   flips after the capped sweep has really finished
 
+#### `test_fork_dedup.py` — forked sessions don't re-count copied turns (Python)
+
+- **Regression (H2).** Parent-then-fork and fork-then-parent both leave the copied
+  turns/tool calls only on the parent and the fork's start at its own first turn;
+  a differing `session_id` alone never drops a turn; the one-shot repair removes
+  pre-fix copies and is idempotent.
+
 #### `pipeline.test.ts` — end-to-end ingest pipeline (4 tests)
 
 - **Regression: turn merging.** Incremental re-ingest must NOT reduce

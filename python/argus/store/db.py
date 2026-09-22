@@ -16,9 +16,10 @@ from .migrations.inline import (
     MIGRATION_004,
     MIGRATION_005,
     MIGRATION_006,
+    MIGRATION_007,
 )
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 class FTS5NotAvailableError(RuntimeError):
@@ -183,6 +184,7 @@ def open_db(path: str | Path, *, read_only: bool = False) -> sqlite3.Connection:
         (4, MIGRATION_004),
         (5, MIGRATION_005),
         (6, MIGRATION_006),
+        (7, MIGRATION_007),
     )
     for version, sql in versioned:
         if current < version:

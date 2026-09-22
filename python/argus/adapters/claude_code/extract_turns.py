@@ -6,6 +6,36 @@ from .model import canonicalize_claude_model
 from .schemas import AssistantLine
 
 
+def copied_from(line: AssistantLine) -> str | None:
+    """Session a forked transcript copied this line from, if it claims one.
+
+    A fork (``sessionKind: "bg"``) starts with verbatim copies of its parent's
+    lines: same ``uuid`` and ``message.id``, ``sessionId`` rewritten to the
+    fork, and the parent's id kept in a ``session_id`` field. That field alone
+    is only a *claim* — some real, non-copied lines differ on it too — so the
+    collector treats a turn as a copy only if the claimed origin session
+    actually stores the same message.
+    """
+    origin = (line.model_extra or {}).get("session_id")
+    if isinstance(origin, str) and origin and origin != line.sessionId:
+        return origin
+    return None
+
+
+def _metadata(first: AssistantLine) -> dict:
+    usage = first.message.usage
+    md: dict = {
+        "service_tier": usage.service_tier,
+        "agentId": first.agentId,
+        "attribution_agent": first.attribution_agent,
+        "isSidechain": first.isSidechain if first.isSidechain is not None else False,
+    }
+    origin = copied_from(first)
+    if origin is not None:
+        md["origin_session_id"] = origin
+    return md
+
+
 def extract_turns(
     lines: list[AssistantLine], offsets: list[int] | None = None
 ) -> list[RawTurnEvent]:
@@ -76,12 +106,7 @@ def extract_turns(
                 cache_write_5m_tokens=cache_5m,
                 cache_write_1h_tokens=cache_1h,
                 tool_calls_count=tool_calls,
-                metadata={
-                    "service_tier": usage.service_tier,
-                    "agentId": first.agentId,
-                    "attribution_agent": first.attribution_agent,
-                    "isSidechain": first.isSidechain if first.isSidechain is not None else False,
-                },
+                metadata=_metadata(first),
             )
         )
     return turns

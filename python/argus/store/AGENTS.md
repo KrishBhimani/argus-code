@@ -14,6 +14,15 @@ migrations; `repository.py` is the typed read/write API over SQLite.
   **non-destructive, idempotent, and re-runnable**. No `DROP`/`DELETE`/`TRUNCATE`
   of user rows to "fix" a schema. Add a new migration by appending `(N, MIGRATION_00N)`
   to the versioned list with the next number.
+- **The one sanctioned delete of ingested rows is fork de-duplication**
+  (`delete_duplicated_turns`): turns/tool calls that a forked session stored as
+  copies of *another stored session's* messages. It removes derived duplicates
+  only — the origin session keeps the rows, the session row itself stays — and
+  callers must verify each copy first (see `collector/AGENTS.md`). Don't widen it
+  into a general "clean up" path.
+- **`idx_turns_message` (MIGRATION_007)** indexes the message-id suffix of
+  `turns.id` (`substr(id, length(session_id) + 2)`); queries must use that exact
+  expression to hit it.
 - **`open_db` self-heals half-applied migrations** and runs each migration
   transactionally. `_run_migration` ignores a `duplicate column name` error so a
   re-run of an `ADD COLUMN` is a no-op. `_split_statements` respects trigger
