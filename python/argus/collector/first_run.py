@@ -16,7 +16,7 @@ from pathlib import Path
 from ..adapters.base import Adapter
 from ..pricing.types import PricingTable
 from ..store.repository import Repository
-from .pipeline import ingest_file
+from .pipeline import ingest_file, recompute_stored_session
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,10 @@ TOOL_ERRORS_FIX_KEY = "backfill_tool_errors_v1"
 #: One-shot in-DB repair of duration_sec / started_at_ms / ended_at_ms on rows
 #: whose derived time columns a late ingest tick overwrote (no re-read needed).
 SESSION_DURATION_REPAIR_KEY = "repair_session_duration_v1"
+
+#: One-shot removal of turns/tool calls that pre-fix ingest stored under a
+#: forked session although they were copies of its parent's lines.
+FORK_DEDUP_REPAIR_KEY = "repair_fork_duplicates_v1"
 
 #: "Re-read every session still on disk once" sweeps, oldest first.
 _REREAD_ALL_SWEEPS = (STREAMED_OUTPUT_FIX_KEY, TOOL_ERRORS_FIX_KEY)
@@ -205,6 +209,7 @@ def run_first_pass_ingest(
                     }
                 )
             handle._inc()
+        _repair_fork_duplicates_once(adapters, repo, table)
         _backfill_missing_derived_data(adapters, repo, table)
         handle._backfill_done.set()
 
@@ -253,6 +258,72 @@ def _repair_session_durations_once(repo: Repository) -> None:
     if fixed:
         logger.info("Repaired duration/start columns on %d sessions.", fixed)
     repo.set_app_meta(SESSION_DURATION_REPAIR_KEY, "1")
+
+
+def _parse_whole_file(adapter: Adapter, file: Path) -> tuple[list, list]:
+    """Parse every line of ``file`` (pure: no DB writes); (turns, tool_calls)."""
+    turns: list = []
+    calls: list = []
+    offset = 0
+    while True:
+        result, new_offset = adapter.ingest_file(file, offset)
+        turns.extend(result.turns)
+        calls.extend(result.tool_calls)
+        if new_offset <= offset:
+            return turns, calls
+        offset = new_offset
+
+
+def _repair_fork_duplicates_once(
+    adapters: list[Adapter], repo: Repository, table: PricingTable
+) -> None:
+    """Delete fork copies stored before fork de-duplication existed.
+
+    Candidates are top-level sessions sharing a message id with another one.
+    Each candidate's file is parsed (not ingested): a turn is a copy when its
+    line claims an origin session that stores the same message — the same
+    rule the live pipeline applies. Only those turns and their tool calls are
+    deleted, then the session is recomputed from what remains. These are
+    derived rows re-countable from the parent; no transcript data is lost.
+    Sessions whose file is gone are left as they are (nothing to verify
+    against). Idempotent: after one pass no candidate has a verified copy.
+    """
+    if repo.get_app_meta(FORK_DEDUP_REPAIR_KEY) == "1":
+        return
+    file_by_basename: dict[str, tuple[Adapter, Path]] = {}
+    for a in adapters:
+        for f in a.discover_session_files():
+            file_by_basename[f.stem] = (a, f)
+    fixed = 0
+    for sid in repo.top_level_sessions_sharing_messages():
+        match = file_by_basename.get(sid.split(":", 1)[-1])
+        if match is None:
+            continue
+        adapter, file = match
+        try:
+            turns, calls = _parse_whole_file(adapter, file)
+        except OSError:
+            continue
+        agent = sid.split(":", 1)[0]
+        claims = {
+            t.native_turn_id: t.metadata["origin_session_id"]
+            for t in turns
+            if t.metadata.get("origin_session_id")
+            and f"{agent}:{t.metadata['origin_session_id']}" != sid
+        }
+        if not claims:
+            continue
+        stored = repo.existing_turn_ids([f"{agent}:{o}:{m}" for m, o in claims.items()])
+        copied = sorted(m for m, o in claims.items() if f"{agent}:{o}:{m}" in stored)
+        if not copied:
+            continue
+        tool_ids = [c.tool_use_id for c in calls if c.native_turn_id in set(copied)]
+        repo.delete_duplicated_turns(sid, copied, tool_ids)
+        recompute_stored_session(repo, sid, table.version)
+        fixed += 1
+    if fixed:
+        logger.info("Removed copied parent turns from %d forked sessions.", fixed)
+    repo.set_app_meta(FORK_DEDUP_REPAIR_KEY, "1")
 
 
 def _stale_on_disk(

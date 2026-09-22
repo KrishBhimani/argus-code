@@ -84,7 +84,14 @@ class Repository:
 
     # ─── Sessions ──────────────────────────────────────────────────────
 
-    def upsert_session(self, s: Session) -> None:
+    def upsert_session(self, s: Session, *, rewrite_started_at: bool = False) -> None:
+        """Insert or update a session row.
+
+        ``started_at`` is insert-only by default (the first tick that saw
+        turns fixes it). ``rewrite_started_at`` is for a deliberate recompute
+        from the stored turns — e.g. after fork de-duplication removed the
+        copied turns that gave a fork its parent's start.
+        """
         started_ms = _iso_to_ms(s.started_at)
         ended_ms = _iso_to_ms(s.ended_at)
         params = {
@@ -121,7 +128,7 @@ class Repository:
               :agent_reported_cost_usd, :metadata, :started_at_ms, :ended_at_ms)
             ON CONFLICT(id) DO UPDATE SET
               agent_version=excluded.agent_version, project_path=excluded.project_path,
-              ended_at=excluded.ended_at, duration_sec=excluded.duration_sec,
+              {started}ended_at=excluded.ended_at, duration_sec=excluded.duration_sec,
               total_fresh_input_tokens=excluded.total_fresh_input_tokens,
               total_output_tokens=excluded.total_output_tokens,
               total_cache_read_tokens=excluded.total_cache_read_tokens,
@@ -131,9 +138,18 @@ class Repository:
               computed_at=excluded.computed_at, agent_reported_cost_usd=excluded.agent_reported_cost_usd,
               metadata=excluded.metadata,
               started_at_ms=excluded.started_at_ms, ended_at_ms=excluded.ended_at_ms
-            """,
+            """.format(started="started_at=excluded.started_at, " if rewrite_started_at else ""),
             params,
         )
+
+    def get_sub_sessions(self, parent_id: str) -> list[Session]:
+        """Stored sub-agent sessions (``<parent_id>/<stem>``) of a parent."""
+        prefix = parent_id + "/"
+        rows = self.db.execute(
+            "SELECT * FROM sessions WHERE substr(id, 1, ?) = ? ORDER BY id",
+            (len(prefix), prefix),
+        ).fetchall()
+        return [_row_to_session(r) for r in rows]
 
     def get_session(self, session_id: str) -> Session | None:
         row = self.db.execute(
@@ -200,6 +216,73 @@ class Repository:
     def get_turn(self, turn_id: str) -> Turn | None:
         row = self.db.execute("SELECT * FROM turns WHERE id = ?", (turn_id,)).fetchone()
         return _row_to_turn(row) if row else None
+
+    def existing_turn_ids(self, ids: list[str]) -> set[str]:
+        """Subset of ``ids`` already stored in turns."""
+        found: set[str] = set()
+        for i in range(0, len(ids), 500):  # stay under SQLite's variable limit
+            chunk = ids[i : i + 500]
+            ph = ",".join("?" for _ in chunk)
+            found.update(
+                r["id"] for r in self.db.execute(f"SELECT id FROM turns WHERE id IN ({ph})", chunk)
+            )
+        return found
+
+    def fork_copies_of(self, origin_session_id: str, message_ids: list[str]) -> list[Turn]:
+        """Turns another top-level session stored as copies of ``origin``'s messages.
+
+        A fork ingested *before* its parent can't know yet that its copied
+        lines are copies. It tags them (``metadata.origin_session_id`` = the
+        parent's native id) and this finds them when the parent arrives.
+        Uses ``idx_turns_message`` (MIGRATION_007).
+        """
+        native = origin_session_id.split(":", 1)[-1]
+        out: list[Turn] = []
+        for i in range(0, len(message_ids), 500):
+            chunk = message_ids[i : i + 500]
+            ph = ",".join("?" for _ in chunk)
+            rows = self.db.execute(
+                f"""
+                SELECT * FROM turns
+                WHERE substr(id, length(session_id) + 2) IN ({ph})
+                  AND session_id != ? AND instr(session_id, '/') = 0
+                  AND json_extract(metadata, '$.origin_session_id') = ?
+                """,
+                [*chunk, origin_session_id, native],
+            ).fetchall()
+            out.extend(_row_to_turn(r) for r in rows)
+        return out
+
+    def top_level_sessions_sharing_messages(self) -> list[str]:
+        """Top-level sessions holding a message id another top-level session
+        also holds — the fork/parent pairs pre-fix ingest double-counted."""
+        rows = self.db.execute(
+            """
+            SELECT DISTINCT a.session_id AS id
+            FROM turns a JOIN turns b
+              ON substr(b.id, length(b.session_id) + 2) = substr(a.id, length(a.session_id) + 2)
+             AND b.session_id != a.session_id
+            WHERE instr(a.session_id, '/') = 0 AND instr(b.session_id, '/') = 0
+            ORDER BY a.session_id
+            """
+        ).fetchall()
+        return [r["id"] for r in rows]
+
+    def delete_duplicated_turns(
+        self, session_id: str, message_ids: list[str], tool_use_ids: list[str]
+    ) -> None:
+        """Delete a fork's copies of another session's messages (derived rows).
+
+        Targeted: only ``{session_id}:{message_id}`` turns and
+        ``{session_id}:{tool_use_id}`` calls that are verified copies — the
+        origin session keeps its own rows. Never touches the session row.
+        """
+        self.db.executemany(
+            "DELETE FROM turns WHERE id = ?", [(f"{session_id}:{m}",) for m in message_ids]
+        )
+        self.db.executemany(
+            "DELETE FROM tool_calls WHERE id = ?", [(f"{session_id}:{t}",) for t in tool_use_ids]
+        )
 
     def get_turns_for_session(self, session_id: str) -> list[Turn]:
         rows = self.db.execute(

@@ -43,6 +43,12 @@ ingests files, `schemas.py` validates each line (`AssistantLine`, `UserLine`, �
   values (the collector keeps the stored ones otherwise). Tool errors are
   returned twice: on calls in the same slice, and as `tool_error_ids` for the
   collector to apply by id to calls stored by an earlier tick.
+- **Forked transcripts carry copies of their parent's lines.** A fork
+  (`sessionKind: "bg"`) starts with verbatim copies (same `uuid`/`message.id`,
+  `sessionId` rewritten, the parent's id kept in `session_id`). `copied_from()`
+  in `extract_turns.py` reads that claim into `metadata.origin_session_id`; the
+  claim alone is not proof (real non-copied lines can differ on `session_id`),
+  so the collector decides — the adapter only reports.
 - **Known data limitation — do not design against it:** sub-agent ids are exactly
   one level deep, and there is no stored workflow grouping or spawn-turn link.
   Don't build features that assume a nested sub-agent tree or a spawn→child edge;

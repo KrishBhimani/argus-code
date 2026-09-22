@@ -105,8 +105,10 @@ def test_open_db_applies_latest_migration(db_path):
 def test_migration_006_adds_tool_use_id_column(db):
     cols = {r["name"] for r in db.execute("PRAGMA table_info(transcript_segments)")}
     assert "tool_use_id" in cols
+    from argus.store.db import SCHEMA_VERSION
+
     row = db.execute("SELECT value FROM app_meta WHERE key = 'schema_version'").fetchone()
-    assert int(row["value"]) == 6
+    assert int(row["value"]) == SCHEMA_VERSION
 
 
 def test_migration_006_index_exists(db):
@@ -135,13 +137,16 @@ def test_open_db_recovers_from_half_applied_migration(db_path):
     )
     conn.close()
 
-    # Re-open must not raise, must finish at v6, and must heal the missing index.
+    # Re-open must not raise, must finish at the latest version, and must heal
+    # the missing index.
+    from argus.store.db import SCHEMA_VERSION
+
     conn = open_db(db_path)
     try:
         ver = conn.execute(
             "SELECT value FROM app_meta WHERE key = 'schema_version'"
         ).fetchone()
-        assert int(ver["value"]) == 6
+        assert int(ver["value"]) == SCHEMA_VERSION
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(transcript_segments)")}
         assert "tool_use_id" in cols
         idx = {
@@ -224,3 +229,12 @@ def test_alerts_unique_on_detector_and_dedup_key(db_path):
             pass
     finally:
         conn.close()
+
+
+def test_migration_007_indexes_turns_by_message_id(db):
+    """Fork de-duplication looks turns up by message id across sessions."""
+    names = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+    assert "idx_turns_message" in names
+    plan = " ".join(r["detail"] for r in db.execute(
+        "EXPLAIN QUERY PLAN SELECT id FROM turns WHERE substr(id, length(session_id) + 2) = 'm'"))
+    assert "idx_turns_message" in plan
