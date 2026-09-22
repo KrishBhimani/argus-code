@@ -6,24 +6,35 @@ from .model import canonicalize_claude_model
 from .schemas import AssistantLine
 
 
-def extract_turns(lines: list[AssistantLine]) -> list[RawTurnEvent]:
+def extract_turns(
+    lines: list[AssistantLine], offsets: list[int] | None = None
+) -> list[RawTurnEvent]:
     """Group assistant lines by message.id, emit one RawTurnEvent per group.
 
     A single message can be split across multiple JSONL lines (one per
     content block in some Claude Code versions) — all sharing message.id.
     We preserve first-seen order and walk every line in the group.
+
+    ``offsets[i]`` is the byte offset of ``lines[i]`` in the file. A turn's
+    ``sequence`` is the offset of its group's first line: monotonic across the
+    whole file, so it doesn't depend on which tick read the line (a per-call
+    counter restarted at 0 every tick and scrambled the turn order). Without
+    offsets (unit tests) the line's position stands in for it.
     """
+    if offsets is None:
+        offsets = list(range(len(lines)))
     by_id: dict[str, list[AssistantLine]] = {}
+    first_offset: dict[str, int] = {}
     order: list[str] = []
-    for line in lines:
+    for line, off in zip(lines, offsets):
         mid = line.message.id
         if mid not in by_id:
             by_id[mid] = []
+            first_offset[mid] = off
             order.append(mid)
         by_id[mid].append(line)
 
     turns: list[RawTurnEvent] = []
-    seq = 0
     for mid in order:
         group = by_id[mid]
         first = group[0]
@@ -54,7 +65,7 @@ def extract_turns(lines: list[AssistantLine]) -> list[RawTurnEvent]:
         turns.append(
             RawTurnEvent(
                 native_turn_id=mid,
-                sequence=seq,
+                sequence=first_offset[mid],
                 timestamp=first.timestamp,
                 model=canonicalize_claude_model(first.message.model),
                 model_raw=first.message.model,
@@ -73,5 +84,4 @@ def extract_turns(lines: list[AssistantLine]) -> list[RawTurnEvent]:
                 },
             )
         )
-        seq += 1
     return turns

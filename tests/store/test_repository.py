@@ -865,3 +865,17 @@ def test_sessions_with_untyped_agent_calls_and_app_meta(repo):
     assert repo.get_app_meta("backfill_agent_subagent_type_v1") is None
     repo.set_app_meta("backfill_agent_subagent_type_v1", "1")
     assert repo.get_app_meta("backfill_agent_subagent_type_v1") == "1"
+
+
+def test_tool_call_error_flag_is_never_cleared_by_a_reupsert(repo):
+    """REGRESSION (H1b): the error comes from a tool_result that may be read in
+    a different tick than the call; a later upsert without it must not reset it."""
+    from argus.schema.types import ToolCall
+
+    repo.upsert_session(session_factory("s", "2026-05-01T00:00:00Z"))
+    call = ToolCall(id="s:t1", session_id="s", turn_index=0, tool_name="Bash", is_error=0,
+                    input_size=2, subagent_type=None, timestamp="2026-05-01T00:00:00Z")
+    repo.upsert_tool_calls([call])
+    repo.mark_tool_calls_errored("s", ["t1", "never-stored"])
+    repo.upsert_tool_calls([call])
+    assert repo.db.execute("SELECT is_error FROM tool_calls").fetchone()[0] == 1

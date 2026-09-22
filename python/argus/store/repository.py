@@ -197,6 +197,10 @@ class Repository:
             params,
         )
 
+    def get_turn(self, turn_id: str) -> Turn | None:
+        row = self.db.execute("SELECT * FROM turns WHERE id = ?", (turn_id,)).fetchone()
+        return _row_to_turn(row) if row else None
+
     def get_turns_for_session(self, session_id: str) -> list[Turn]:
         rows = self.db.execute(
             "SELECT * FROM turns WHERE session_id = ? ORDER BY sequence",
@@ -240,10 +244,11 @@ class Repository:
                 ).fetchall()
                 error_text = {r["tool_use_id"]: r["text"] for r in seg_rows}
 
-        # Resumed sessions restart `sequence` in every new transcript file, so
-        # turn_index alone is ambiguous: a session resumed 15 times has 15 turns
-        # numbered 0. Attaching by turn_index multiplied every tool call by the
-        # number of resumes (78k "calls" for a session with 351). Attach each
+        # Rows written before sequences became file byte offsets restarted
+        # `sequence` / `turn_index` at 0 on every ingest tick, so turn_index
+        # alone is ambiguous on them: a session ingested in 15 ticks has 15
+        # turns numbered 0. Attaching by turn_index multiplied every tool call
+        # (78k "calls" for a session with 351). Attach each
         # call to exactly one turn: among the turns sharing its turn_index, the
         # latest whose timestamp is not after the call's (calls carry their
         # assistant message's time); if none precede it, the earliest.
@@ -356,11 +361,72 @@ class Repository:
                 VALUES (:id, :session_id, :turn_index, :tool_name, :is_error, :input_size, :subagent_type, :timestamp)
                 ON CONFLICT(id) DO UPDATE SET
                   turn_index=excluded.turn_index, tool_name=excluded.tool_name,
-                  is_error=excluded.is_error, input_size=excluded.input_size,
+                  is_error=MAX(tool_calls.is_error, excluded.is_error),
+                  input_size=excluded.input_size,
                   subagent_type=excluded.subagent_type, timestamp=excluded.timestamp
                 """,
                 rows,
             )
+
+    def existing_tool_call_ids(self, ids: list[str]) -> set[str]:
+        """Subset of ``ids`` already stored in tool_calls."""
+        found: set[str] = set()
+        for i in range(0, len(ids), 500):  # stay under SQLite's variable limit
+            chunk = ids[i : i + 500]
+            ph = ",".join("?" for _ in chunk)
+            found.update(
+                r["id"]
+                for r in self.db.execute(f"SELECT id FROM tool_calls WHERE id IN ({ph})", chunk)
+            )
+        return found
+
+    def mark_tool_calls_errored(self, session_id: str, tool_use_ids: list[str]) -> None:
+        """Flag calls whose tool_result reported an error, by id.
+
+        The result usually lands in a later ingest tick than its tool_use, so
+        this runs against whatever call rows exist — stored this tick or any
+        earlier one. ``is_error`` only ever goes 0 → 1 (``upsert_tool_calls``
+        keeps the MAX), so a re-read that sees a call without its result can't
+        clear the flag. Ids with no stored call yet are a no-op.
+        """
+        if not tool_use_ids:
+            return
+        self.db.executemany(
+            "UPDATE tool_calls SET is_error = 1 WHERE id = ? AND is_error = 0",
+            [(f"{session_id}:{t}",) for t in tool_use_ids],
+        )
+
+    def repair_session_time_columns(self) -> int:
+        """Make ``duration_sec`` / ``started_at_ms`` / ``ended_at_ms`` agree with
+        the stored ``started_at`` / ``ended_at`` strings; return rows changed.
+
+        Pre-fix incremental ingest recomputed the start from each tick's first
+        line. ``upsert_session`` kept the original ``started_at`` (only written
+        on insert, by the tick that first saw turns) but overwrote the derived
+        columns, leaving rows like "3 s" for a 29-day session. The ISO strings
+        are trustworthy, so this is a pure in-DB recompute — no file re-read,
+        no row deleted, and a second run changes nothing.
+        """
+        rows = self.db.execute(
+            "SELECT id, started_at, ended_at, duration_sec, started_at_ms, ended_at_ms"
+            " FROM sessions"
+        ).fetchall()
+        changed = 0
+        for r in rows:
+            s_ms = _iso_to_ms(r["started_at"])
+            e_ms = _iso_to_ms(r["ended_at"])
+            dur = r["duration_sec"]
+            if s_ms is not None and e_ms is not None:
+                dur = max(0, (e_ms - s_ms) // 1000)
+            if (s_ms, e_ms, dur) == (r["started_at_ms"], r["ended_at_ms"], r["duration_sec"]):
+                continue
+            self.db.execute(
+                "UPDATE sessions SET duration_sec = ?, started_at_ms = ?, ended_at_ms = ?"
+                " WHERE id = ?",
+                (dur, s_ms, e_ms, r["id"]),
+            )
+            changed += 1
+        return changed
 
     def count_tool_calls_for_session(self, session_id: str) -> int:
         row = self.db.execute(

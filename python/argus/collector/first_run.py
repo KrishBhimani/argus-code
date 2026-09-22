@@ -40,6 +40,23 @@ FIRST_RUN_THREAD_NAME = "argus-firstrun-bg"
 #: per-run cap: a re-ingest bumps ``sessions.computed_at`` past it.
 STREAMED_OUTPUT_FIX_KEY = "backfill_streamed_output_tokens_v1"
 
+#: app_meta flag for the one-shot re-read that restores tool-call ``is_error``
+#: flags lost by pre-fix incremental ingest (a tool_result arriving in a later
+#: tick than its tool_use was dropped). Same "re-read everything on disk once"
+#: shape as the streamed-output sweep; the re-read also rewrites file-wide
+#: turn sequences and the session's project from the file start.
+TOOL_ERRORS_FIX_KEY = "backfill_tool_errors_v1"
+
+#: One-shot in-DB repair of duration_sec / started_at_ms / ended_at_ms on rows
+#: whose derived time columns a late ingest tick overwrote (no re-read needed).
+SESSION_DURATION_REPAIR_KEY = "repair_session_duration_v1"
+
+#: "Re-read every session still on disk once" sweeps, oldest first.
+_REREAD_ALL_SWEEPS = (STREAMED_OUTPUT_FIX_KEY, TOOL_ERRORS_FIX_KEY)
+
+#: Per-run cap on backfill re-reads (see collector/AGENTS.md "Bounded per run").
+BACKFILL_CAP = 200
+
 
 def join_first_run_threads(timeout: float = 10.0) -> list[str]:
     """Wait for any live first-run background thread; return those still alive.
@@ -121,7 +138,9 @@ def run_first_pass_ingest(
     """
     cutoff = time.time() - recent_days * 86_400
     handle = FirstRunHandle()
-    _prepare_streamed_output_fix(repo)
+    _repair_session_durations_once(repo)
+    for key in _REREAD_ALL_SWEEPS:
+        _prepare_reread_sweep(repo, key)
 
     # Phase 1 (foreground, sync, in the calling thread).
     recent: list[tuple[Adapter, Path]] = []
@@ -201,42 +220,64 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _streamed_fix_started_at(repo: Repository) -> str:
-    """Return the cutoff for the streamed-output re-read, stamping it once.
+def _sweep_started_at(repo: Repository, key: str) -> str:
+    """Return the cutoff for a re-read-everything sweep, stamping it once.
 
     Called from ``run_first_pass_ingest`` *before* any ingest so sessions
     written by this (fixed) process land after the cutoff and aren't re-read.
     A fresh DB has nothing to correct, so the fix is marked done outright.
     The backfill also calls this as a fallback for direct callers.
     """
-    key = STREAMED_OUTPUT_FIX_KEY + "_started_at"
-    started_at = repo.get_app_meta(key)
+    stamp_key = key + "_started_at"
+    started_at = repo.get_app_meta(stamp_key)
     if started_at is None:
         started_at = _iso_now()
-        repo.set_app_meta(key, started_at)
+        repo.set_app_meta(stamp_key, started_at)
     return started_at
 
 
-def _prepare_streamed_output_fix(repo: Repository) -> None:
-    if repo.get_app_meta(STREAMED_OUTPUT_FIX_KEY) == "1":
+def _prepare_reread_sweep(repo: Repository, key: str) -> None:
+    if repo.get_app_meta(key) == "1":
         return
     if not repo.list_sessions(limit=1):
-        repo.set_app_meta(STREAMED_OUTPUT_FIX_KEY, "1")
+        repo.set_app_meta(key, "1")
         return
-    _streamed_fix_started_at(repo)
+    _sweep_started_at(repo, key)
+
+
+def _repair_session_durations_once(repo: Repository) -> None:
+    """Writer-path only: the read-only dashboard under argusd can't write."""
+    if repo.get_app_meta(SESSION_DURATION_REPAIR_KEY) == "1":
+        return
+    fixed = repo.repair_session_time_columns()
+    if fixed:
+        logger.info("Repaired duration/start columns on %d sessions.", fixed)
+    repo.set_app_meta(SESSION_DURATION_REPAIR_KEY, "1")
+
+
+def _stale_on_disk(
+    repo: Repository, key: str, file_by_basename: dict[str, tuple[Adapter, Path]]
+) -> list[str]:
+    """Top-level sessions a pending sweep still has to re-read."""
+    started_at = _sweep_started_at(repo, key)
+    return [
+        c["id"]
+        for c in repo.top_level_sessions_computed_before(started_at)
+        if c["id"].split(":", 1)[-1] in file_by_basename
+    ]
 
 
 def _backfill_missing_derived_data(
     adapters: list[Adapter], repo: Repository, table: PricingTable
 ) -> None:
     """Re-ingest sessions missing tool_calls / segments after a slice upgrade."""
-    missing_tools = repo.sessions_missing_tool_calls(200)
+    missing_tools = repo.sessions_missing_tool_calls(BACKFILL_CAP)
     ids: set[str] = {c["id"] for c in missing_tools}
     # Sessions whose segments predate the tool_use_id column also need their
     # sub-agent files re-read, not just the parent — track them separately.
     deep_reset: set[str] = set()
     if repo.is_search_indexing_enabled():
-        for c in repo.sessions_missing_segments(200):
+        for c in repo.sessions_missing_segments(BACKFILL_CAP):
             # A sub-agent's transcript is only re-read when its parent is
             # re-ingested with the sub-agent file offsets reset (deep_reset).
             # The sub-agent id itself is skipped by the loop below ("/" guard),
@@ -246,13 +287,13 @@ def _backfill_missing_derived_data(
             parent = c["id"].split("/", 1)[0]
             ids.add(parent)
             deep_reset.add(parent)
-        for c in repo.sessions_missing_tool_use_ids(200):
+        for c in repo.sessions_missing_tool_use_ids(BACKFILL_CAP):
             ids.add(c["id"])
             deep_reset.add(c["id"])
     # Zero-cost turns whose model the current table prices: ingested before
     # the model was in the bundled table. Sub-agent turns need their files
     # re-read too, hence deep_reset.
-    for c in repo.sessions_with_unpriced_turns(list(table.models.keys()), 200):
+    for c in repo.sessions_with_unpriced_turns(list(table.models.keys()), BACKFILL_CAP):
         ids.add(c["id"])
         deep_reset.add(c["id"])
     # One-shot: Agent calls ingested before the Task->Agent rename fix have
@@ -261,7 +302,7 @@ def _backfill_missing_derived_data(
     agent_fix_key = "backfill_agent_subagent_type_v1"
     agent_fix_pending = repo.get_app_meta(agent_fix_key) != "1"
     if agent_fix_pending:
-        for c in repo.sessions_with_untyped_agent_calls(200):
+        for c in repo.sessions_with_untyped_agent_calls(BACKFILL_CAP):
             ids.add(c["id"].split("/", 1)[0])
     # session_id "claude_code:<basename>" → file path lookup.
     file_by_basename: dict[str, tuple[Adapter, Path]] = {}
@@ -269,30 +310,42 @@ def _backfill_missing_derived_data(
         for f in a.discover_session_files():
             file_by_basename[f.stem] = (a, f)
 
-    # One-shot: turns ingested before extract_turns learned to take
-    # output_tokens from a message's final streamed line hold placeholder
-    # counts. Nothing in the DB distinguishes them, so re-read every session
-    # still on disk (sub-agents too) once. Sessions whose transcript Claude
-    # Code has since deleted can't be corrected and must not block completion.
-    streamed_fix_pending = repo.get_app_meta(STREAMED_OUTPUT_FIX_KEY) != "1"
-    if streamed_fix_pending:
-        started_at = _streamed_fix_started_at(repo)
-        stale_on_disk = [
-            c["id"]
-            for c in repo.top_level_sessions_computed_before(started_at)
-            if c["id"].split(":", 1)[-1] in file_by_basename
-        ]
-        ids.update(stale_on_disk)
-        deep_reset.update(stale_on_disk)
+    # One-shot "re-read every session still on disk" sweeps. Nothing in the
+    # DB distinguishes a pre-fix row (placeholder output_tokens from a
+    # message's first streamed line; an is_error lost because the tool_result
+    # arrived in a later tick), so each re-reads everything once, sub-agents
+    # too. Sessions whose transcript Claude Code has since deleted can't be
+    # corrected and must not block completion.
+    pending_sweeps = [k for k in _REREAD_ALL_SWEEPS if repo.get_app_meta(k) != "1"]
+    for key in pending_sweeps:
+        stale = _stale_on_disk(repo, key, file_by_basename)
+        ids.update(stale)
+        deep_reset.update(stale)
 
-    candidates = sorted(ids)[:200]
-    if agent_fix_pending and len(candidates) < 200:
+    candidates = sorted(ids)[:BACKFILL_CAP]
+    if agent_fix_pending and len(candidates) < BACKFILL_CAP:
         repo.set_app_meta(agent_fix_key, "1")
-    if streamed_fix_pending and len(candidates) < 200:
-        repo.set_app_meta(STREAMED_OUTPUT_FIX_KEY, "1")
-    if not candidates:
-        return
 
+    _reread(candidates, deep_reset, file_by_basename, repo, table)
+
+    # A sweep is done only when nothing it still needs remains — checked
+    # AFTER the work, so a capped run can't mark it done early. A re-ingest
+    # bumps computed_at past the stamp; a session whose re-read failed was
+    # attempted and would fail again, so it doesn't hold the flag hostage.
+    attempted = set(candidates)
+    for key in pending_sweeps:
+        if not set(_stale_on_disk(repo, key, file_by_basename)) - attempted:
+            repo.set_app_meta(key, "1")
+
+
+def _reread(
+    candidates: list[str],
+    deep_reset: set[str],
+    file_by_basename: dict[str, tuple[Adapter, Path]],
+    repo: Repository,
+    table: PricingTable,
+) -> None:
+    """Reset offsets to 0 and re-ingest each candidate's file."""
     for id_ in candidates:
         if "/" in id_:  # sub-agent rollup ids — walked via parents
             continue

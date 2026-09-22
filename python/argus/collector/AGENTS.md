@@ -15,6 +15,19 @@ after a schema/feature upgrade.
   fully-read file sits at EOF and is **not** re-read on the next tick. To force a
   re-extract you MUST reset its offset to 0 (`repo.set_file_offset(path, 0)`) —
   re-calling `ingest_file` alone does nothing for an EOF file.
+- **Chunked ingest == one-pass ingest** (pinned by
+  `tests/collector/test_incremental_invariant.py`; keep it green for every
+  adapter). `_apply_result` owns the cross-tick merge: a stored turn with the
+  same id and a *smaller* `sequence` on a tick that didn't start at offset 0 is
+  the head of a message whose tail this tick holds → keep head
+  sequence/timestamp/input/cache, `max` output, add the tail's tool_use blocks
+  that aren't stored yet (idempotent if the same tail is re-read), and
+  re-point this tick's calls to the head's sequence. A read from offset 0 (or an
+  equal sequence = the same lines re-read) overwrites, which is how pre-fix rows
+  get rewritten. `tool_error_ids` are applied by id after the call upsert.
+  `_header_for_recompute(..., authoritative=from_offset == 0)` keeps the stored
+  `project_path`/`started_at` on later ticks; `build_session` widens
+  start/end with every stored turn.
 - **Sub-agents are walked via the parent.** A parent ingest discovers
   `adapter.sub_session_files_for(parent)` and ingests any that **grew past their
   offset**. Sub-agent session ids contain `/` (`<parent>/agent-<hex>`).
@@ -31,16 +44,23 @@ after a schema/feature upgrade.
   re-read (`backfill_agent_subagent_type_v1`) marks itself done once its candidate
   list fits in a run, because default-agent calls are NULL forever and would
   otherwise re-trigger every start.
-- **The streamed-output re-read (`backfill_streamed_output_tokens_v1`) is a
-  "re-read everything on disk once" sweep.** Pre-fix rows hold placeholder
-  `output_tokens` and nothing in the DB distinguishes them, so the candidate
-  set is every top-level session whose `computed_at` predates the companion
-  `…_started_at` stamp and whose file still exists (deep_reset for sub-agents).
-  The stamp is written by `run_first_pass_ingest` **before** any ingest so this
-  process's own writes land after it; a fresh DB marks the fix done outright.
+- **"Re-read everything on disk once" sweeps** (`_REREAD_ALL_SWEEPS`:
+  `backfill_streamed_output_tokens_v1` for placeholder `output_tokens`,
+  `backfill_tool_errors_v1` for `is_error` flags lost when a tool_result landed
+  in a later tick). Pre-fix rows are indistinguishable in the DB, so the
+  candidate set is every top-level session whose `computed_at` predates the
+  sweep's `…_started_at` stamp and whose file still exists (deep_reset for
+  sub-agents). The stamp is written by `run_first_pass_ingest` **before** any
+  ingest so this process's own writes land after it; a fresh DB marks the fix
+  done outright. The flag flips **after** the re-reads, only when no remaining
+  candidate went un-attempted — so a capped run can't mark it done early.
   Sessions whose transcript Claude Code already deleted keep their old values —
   the archive can't be corrected from data that no longer exists.
-- **Bounded per run.** Backfill candidates are capped (200) per `argus start`;
+- **In-DB repairs run on the writer path only.** `repair_session_duration_v1`
+  (`_repair_session_durations_once`, from `run_first_pass_ingest`) recomputes
+  `duration_sec`/`started_at_ms`/`ended_at_ms` from the stored ISO strings. The
+  read-only dashboard under argusd never runs it.
+- **Bounded per run.** Backfill candidates are capped (`BACKFILL_CAP`, 200) per `argus start`;
   large installs may need several restarts to converge. If you add a new bounded
   sweep, surface what was deferred rather than silently truncating.
 

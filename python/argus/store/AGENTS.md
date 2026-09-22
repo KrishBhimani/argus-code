@@ -34,7 +34,14 @@ migrations; `repository.py` is the typed read/write API over SQLite.
   deliberately unbounded: the collector filters to files still on disk before
   applying its per-run cap.
 - **Upserts are idempotent** (conflict-replace) so re-ingesting a file from a reset
-  offset never duplicates or corrupts rows.
+  offset never duplicates or corrupts rows. One exception is deliberate:
+  `tool_calls.is_error` is monotonic (`MAX(old, new)` on conflict, and
+  `mark_tool_calls_errored` only sets 0 → 1), because the error comes from a
+  tool_result that may be read in a different tick than the call.
+- **`upsert_session` never rewrites `started_at`** (insert-only), but does
+  rewrite `duration_sec`/`started_at_ms`/`ended_at_ms`; callers must pass a
+  session whose start is the file's start. `repair_session_time_columns`
+  re-derives those three columns from the stored ISO strings (idempotent).
 
 ## Work Guidance
 

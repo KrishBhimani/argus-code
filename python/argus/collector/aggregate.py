@@ -13,6 +13,25 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _parse_iso(ts: str) -> datetime | None:
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _earliest(stamps: list[str | None]) -> str | None:
+    """Earliest parseable ISO timestamp, returned in its original spelling."""
+    parsed = [(d, s) for s in stamps if s and (d := _parse_iso(s)) is not None]
+    return min(parsed, key=lambda p: p[0])[1] if parsed else None
+
+
+def _latest(stamps: list[str | None]) -> str | None:
+    parsed = [(d, s) for s in stamps if s and (d := _parse_iso(s)) is not None]
+    return max(parsed, key=lambda p: p[0])[1] if parsed else None
+
+
 def build_turn(raw: RawTurnEvent, session_id: str, table: PricingTable) -> Turn:
     return Turn(
         id=f"{session_id}:{raw.native_turn_id}",
@@ -58,8 +77,12 @@ def build_session(
         else "unknown"
     )
 
-    started_at = header.started_at or (all_turns[0].timestamp if all_turns else computed_at)
-    ended_at = header.ended_at or (all_turns[-1].timestamp if all_turns else None)
+    # The header only describes the lines of the tick that produced it; the
+    # stored turns cover the whole file. Widen to both so a late tick can't
+    # move the start forward (which is how 29-day sessions ended up "3 s").
+    turn_ts = [t.timestamp for t in all_turns if t.timestamp]
+    started_at = _earliest([header.started_at, *turn_ts]) or computed_at
+    ended_at = _latest([header.ended_at, *turn_ts])
 
     duration: int | None = None
     if ended_at:
