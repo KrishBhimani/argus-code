@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, type Window } from './client';
+import { api, tzOffsetMin, type Window } from './client';
 
-export const useOverview = (w: Window) => useQuery({ queryKey: ['overview', w], queryFn: () => api.overview(w) });
+// Day-bucketed queries key on the UTC offset too: data bucketed before a DST
+// change must not be served for the new offset.
+export const useOverview = (w: Window) => useQuery({ queryKey: ['overview', w, tzOffsetMin()], queryFn: () => api.overview(w) });
 export const useSessions = () => useQuery({ queryKey: ['sessions'], queryFn: () => api.sessions(), select: (d) => d.sessions });
 export const useSession = (id: string) => useQuery({ queryKey: ['session', id], queryFn: () => api.session(id) });
 export const useTimeline = (id: string) => useQuery({ queryKey: ['timeline', id], queryFn: () => api.timeline(id) });
@@ -9,7 +11,7 @@ export const useSubagents = (id: string) =>
   useQuery({ queryKey: ['subagents', id], queryFn: () => api.subagents(id), select: (d) => d.subagents });
 export const useToolsOverview = (w: Window) => useQuery({ queryKey: ['tools', w], queryFn: () => api.toolsOverview(w) });
 export const useTrends = (g: 'day' | 'week' | 'month', by: 'model' | 'agent') =>
-  useQuery({ queryKey: ['trends', g, by], queryFn: () => api.trends(g, by) });
+  useQuery({ queryKey: ['trends', g, by, tzOffsetMin()], queryFn: () => api.trends(g, by) });
 export const useAlerts = () => useQuery({ queryKey: ['alerts'], queryFn: () => api.alerts(200), select: (d) => d.alerts });
 export const useUnseenAlerts = () =>
   useQuery({ queryKey: ['alerts', 'unseen'], queryFn: () => api.unseenAlerts(), select: (d) => d.alerts, refetchInterval: 10_000 });
