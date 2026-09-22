@@ -17,9 +17,16 @@ const Code = ({ children }: { children: string }) => <span className="font-mono 
 
 const DETECTORS = [
   { n: 'tool_error_rate_spike', on: true, note: '7d vs 28d' },
-  { n: 'cost_spike', on: false, note: 'planned' },
-  { n: 'cache_hit_drop', on: false, note: 'planned' },
+  { n: 'cost_spike', on: true, note: '7d vs 28d/wk' },
+  { n: 'cache_hit_drop', on: true, note: '7d vs 28d' },
 ];
+
+/** Identifying chips for a finding — the detectors key on a tool or a project. */
+const subject = (a: Alert) => {
+  const tool = typeof a.metadata?.tool_name === 'string' ? (a.metadata.tool_name as string) : null;
+  const project = typeof a.metadata?.project === 'string' ? (a.metadata.project as string) : null;
+  return [tool && `tool=${tool}`, project && `project=${project}`].filter(Boolean) as string[];
+};
 
 export default function AlertsPage() {
   const all = useAlerts();
@@ -50,14 +57,14 @@ export default function AlertsPage() {
           )}
           {rows.map((a) => {
             const seen = !unseenIds.has(a.id);
-            const tool = typeof a.metadata?.tool === 'string' ? (a.metadata.tool as string) : null;
+            const chips = subject(a);
             return (
               <div key={a.id} className={`flex items-start gap-3.5 p-3.5 border-b border-line ${seen ? 'opacity-70' : RAIL[a.severity]}`}>
                 <Pill kind={KIND[a.severity]} className="mt-px">{a.severity.toUpperCase()}</Pill>
                 <div className="flex flex-col gap-1 flex-1 min-w-0">
                   <span className="font-semibold">{a.title}</span>
                   <span className="text-ink-1">{a.message}</span>
-                  <div className="flex gap-2 mt-1.5 items-center"><Code>{a.detector}</Code>{tool && <Code>{`tool=${tool}`}</Code>}</div>
+                  <div className="flex gap-2 mt-1.5 items-center"><Code>{a.detector}</Code>{chips.map((c) => <Code key={c}>{c}</Code>)}</div>
                 </div>
                 <div className="flex flex-col items-end gap-2">
                   <span className="font-mono text-[11px] text-ink-2 whitespace-nowrap">{fmtWhen(a)}</span>
