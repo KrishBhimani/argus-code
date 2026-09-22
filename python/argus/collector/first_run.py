@@ -410,12 +410,11 @@ def _backfill_missing_derived_data(
         deep_reset.update(stale)
 
     candidates = sorted(ids)[:BACKFILL_CAP]
-    if agent_fix_pending and len(candidates) < BACKFILL_CAP:
-        repo.set_app_meta(agent_fix_key, "1")
-
     _reread(candidates, deep_reset, file_by_basename, repo, table, should_stop)
     if should_stop():
-        return  # interrupted: don't judge sweep completion on a partial run
+        return  # interrupted: don't mark one-shot work done on a partial run
+    if agent_fix_pending and len(candidates) < BACKFILL_CAP:
+        repo.set_app_meta(agent_fix_key, "1")
 
     # A sweep is done only when nothing it still needs remains — checked
     # AFTER the work, so a capped run can't mark it done early. A re-ingest
