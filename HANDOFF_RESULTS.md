@@ -5,23 +5,12 @@ was done test-first (failing test seen first), `uv run pytest` green on each bra
 tip, DOX pass done, and a `code-review` pass run on each diff with real findings
 fixed in follow-up commits.
 
-## ⚠️ Nothing is pushed — no PRs are open
+## Publishing
 
-This environment has no GitHub credentials (`gh auth status`: not logged in;
-`git push` over HTTPS asks for a username → `terminal prompts disabled`). Per the
-handoff's stop rule every branch is **committed locally only** and each PR body is
-below. To publish from a machine with access:
-
-```sh
-for b in fix/incremental-ingest fix/pricing-current-models fix/fork-double-count \
-         fix/store-transactions fix/shutdown-join-writers fix/pidfile-identity \
-         fix/template-secrets fix/dashboard-day-buckets fix/codex-incremental-ingest \
-         chore/handoff-results; do git push -u origin "$b"; done
-# then, per PR (bodies in the appendix):
-gh pr create --base main --head fix/incremental-ingest --title "fix(ingest): make incremental ingest equal to a one-pass read" --body-file <h1 body>
-# ... stacked PRs also target main (put "Depends on #<n>" first — already in the bodies)
-gh pr create --base feat/codex-adapter --head fix/codex-incremental-ingest ...
-```
+All branches are pushed to `origin` and PRs #27–#35 are open (none merged). The
+first run had no GitHub credentials; branches were pushed and PRs opened once the
+maintainer logged in. Stacked PRs (#29 → #30 → #31 → #34) target `main` and begin
+with "Depends on #n"; #35 targets `feat/codex-adapter`.
 
 Commits are authored as `KrishBhimani <126689784+KrishBhimani@users.noreply.github.com>`
 (set in this clone's **repo-local** git config; no identity was configured) with **no**
@@ -31,15 +20,15 @@ AI co-author trailer, per the maintainer's rule.
 
 | Item | Branch | Base | PR | Status | Summary |
 |---|---|---|---|---|---|
-| H1 incremental ingest | `fix/incremental-ingest` | main | local only | ready (not opened) | Chunked ingest == one-pass: byte-offset sequences, split-message merge (idempotent), errors applied by id, stored project/start kept; repairs `repair_session_duration_v1` + `backfill_tool_errors_v1` |
-| H3 pricing | `fix/pricing-current-models` | main | local only | ready (not opened) | Bundled `2026-09-22.json` adds opus-5 / opus-5-5 / sonnet-5 / fable-5-1 (Anthropic prices); refresh writes `<data-dir>/pricing`, newest table wins; unknown model logged once |
-| H2 fork double count | `fix/fork-double-count` | H1 | local only | ready (not opened) | Copied parent turns dropped when the origin stores them; order-independent reclaim; `MIGRATION_007` index; `repair_fork_duplicates_v1` (targeted delete of verified duplicate derived rows) |
-| H4 transactions | `fix/store-transactions` | H2 | local only | ready (not opened) | `Repository.transaction()` (BEGIN IMMEDIATE/SAVEPOINT, per-connection RLock); every write locked; ingest rows + offset atomic; 3,000 calls 2.18 s → 0.012 s |
-| H5 shutdown | `fix/shutdown-join-writers` | H4 | local only | ready (not opened) | Stop events + name-based joins for first-run and search backfill; skip `close()` if a writer is still alive; one-worker backfill claim; fixed a latent lock deadlock |
-| H6 pidfile identity | `fix/pidfile-identity` | main | local only | ready (not opened) | PID + start time; VERIFIED/STALE/UNVERIFIED; only verified argusd is ever killed; legacy bare-PID files handled |
-| H7 template secrets | `fix/template-secrets` | main | local only | ready (not opened) | One link-safe walk for copy + "left out" report; nested secrets/`*.local.json`/symlinks/junctions skipped; more credential names |
-| H8 day buckets | `fix/dashboard-day-buckets` | H5 | local only | ready (not opened) | Server buckets days in the viewer's `tz`; `/api/overview.prior_window`; dashboard uses both; Tile "new"; rebuilt `dashboard-dist` |
-| Codex H1 | `fix/codex-incremental-ingest` | `feat/codex-adapter` | local only | ready (not opened) | Byte-offset sequences, errors by id across holdback, child links survive a second refresh |
+| H1 incremental ingest | `fix/incremental-ingest` | main | [#27](https://github.com/KrishBhimani/argus-code/pull/27) | opened | Chunked ingest == one-pass: byte-offset sequences, split-message merge (idempotent), errors applied by id, stored project/start kept; repairs `repair_session_duration_v1` + `backfill_tool_errors_v1` |
+| H3 pricing | `fix/pricing-current-models` | main | [#28](https://github.com/KrishBhimani/argus-code/pull/28) | opened | Bundled `2026-09-22.json` adds opus-5 / opus-5-5 / sonnet-5 / fable-5-1 (Anthropic prices); refresh writes `<data-dir>/pricing`, newest table wins; unknown model logged once |
+| H2 fork double count | `fix/fork-double-count` | H1 | [#29](https://github.com/KrishBhimani/argus-code/pull/29) | opened | Copied parent turns dropped when the origin stores them; order-independent reclaim; `MIGRATION_007` index; `repair_fork_duplicates_v1` (targeted delete of verified duplicate derived rows) |
+| H4 transactions | `fix/store-transactions` | H2 | [#30](https://github.com/KrishBhimani/argus-code/pull/30) | opened | `Repository.transaction()` (BEGIN IMMEDIATE/SAVEPOINT, per-connection RLock); every write locked; ingest rows + offset atomic; 3,000 calls 2.18 s → 0.012 s |
+| H5 shutdown | `fix/shutdown-join-writers` | H4 | [#31](https://github.com/KrishBhimani/argus-code/pull/31) | opened | Stop events + name-based joins for first-run and search backfill; skip `close()` if a writer is still alive; one-worker backfill claim; fixed a latent lock deadlock |
+| H6 pidfile identity | `fix/pidfile-identity` | main | [#32](https://github.com/KrishBhimani/argus-code/pull/32) | opened | PID + start time; VERIFIED/STALE/UNVERIFIED; only verified argusd is ever killed; legacy bare-PID files handled |
+| H7 template secrets | `fix/template-secrets` | main | [#33](https://github.com/KrishBhimani/argus-code/pull/33) | opened | One link-safe walk for copy + "left out" report; nested secrets/`*.local.json`/symlinks/junctions skipped; more credential names |
+| H8 day buckets | `fix/dashboard-day-buckets` | H5 | [#34](https://github.com/KrishBhimani/argus-code/pull/34) | opened | Server buckets days in the viewer's `tz`; `/api/overview.prior_window`; dashboard uses both; Tile "new"; rebuilt `dashboard-dist` |
+| Codex H1 | `fix/codex-incremental-ingest` | `feat/codex-adapter` | [#35](https://github.com/KrishBhimani/argus-code/pull/35) | opened | Byte-offset sequences, errors by id across holdback, child links survive a second refresh |
 
 No item was skipped or draft-blocked.
 
