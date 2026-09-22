@@ -110,13 +110,14 @@ def session_factory(
     *,
     agent: str = "claude_code",
     cost: float = 1.5,
+    project_path: str = "/p",
 ) -> Session:
     """Synthetic Session row for API/repository tests."""
     return Session(
         id=sid,
         agent=agent,
         agent_version="2.1.94",
-        project_path="/p",
+        project_path=project_path,
         started_at=ts,
         ended_at=ts,
         duration_sec=0,

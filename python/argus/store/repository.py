@@ -768,6 +768,47 @@ class Repository:
         ).fetchone()
         return {"tokens": row["tokens"], "cost_usd": row["cost_usd"], "sessions": row["sessions"]}
 
+    def project_turn_stats_in_range(
+        self, *, start_iso: str, end_iso: str
+    ) -> list[dict[str, Any]]:
+        """Per-project turn/cost/token totals over a half-open ``[start, end)``.
+
+        Feeds the window-vs-baseline detectors (``cost_spike``,
+        ``cache_hit_drop``), which key on ``project_path``. Sub-agent turns
+        (``parent/sub`` session ids) are attributed to the parent session —
+        the same collapse ``aggregate_turns_by_day`` does — so a project's
+        totals include the work it delegated.
+        """
+        rows = self.db.execute(
+            """
+            WITH t AS (
+              SELECT
+                CASE
+                  WHEN instr(session_id, '/') > 0
+                  THEN substr(session_id, 1, instr(session_id, '/') - 1)
+                  ELSE session_id
+                END AS root_session_id,
+                cost_usd, fresh_input_tokens, output_tokens,
+                cache_read_tokens, cache_write_tokens
+              FROM turns
+              WHERE timestamp >= ? AND timestamp < ?
+            )
+            SELECT
+              s.project_path AS project_path,
+              COUNT(*) AS turns,
+              COALESCE(SUM(t.cost_usd), 0) AS cost,
+              COALESCE(SUM(t.fresh_input_tokens), 0) AS fresh_input,
+              COALESCE(SUM(t.output_tokens), 0) AS output,
+              COALESCE(SUM(t.cache_read_tokens), 0) AS cache_read,
+              COALESCE(SUM(t.cache_write_tokens), 0) AS cache_write
+            FROM t
+            JOIN sessions s ON s.id = t.root_session_id
+            GROUP BY s.project_path
+            """,
+            (start_iso, end_iso),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def mcp_tool_calls(self, cutoff_iso: str) -> list[dict[str, Any]]:
         rows = self.db.execute(
             r"""
