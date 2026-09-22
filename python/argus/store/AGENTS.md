@@ -28,6 +28,17 @@ migrations; `repository.py` is the typed read/write API over SQLite.
   re-run of an `ADD COLUMN` is a no-op. `_split_statements` respects trigger
   `BEGIN…END` and `CASE…END`, so don't hand it naive `;`-splitting assumptions.
   The DB runs in autocommit (`isolation_level=None`); `executescript` force-commits.
+- **Writes go through `Repository.transaction()`** — never `with self.db:` (in
+  autocommit mode it issues no BEGIN, so every `executemany` row committed alone
+  and its `__exit__` ended a caller's transaction) and never `self.db.commit()`.
+  Every write method carries `@_writes`; add it to any new one. The outermost
+  `transaction()` runs `BEGIN IMMEDIATE`/`COMMIT`/`ROLLBACK`, nested calls use a
+  SAVEPOINT. It holds the connection's `write_lock` (an `RLock` on the
+  `ArgusConnection` that `open_db` returns via `factory=`) for the whole block:
+  **writers serialise, readers don't take the lock**, so a reader thread sharing
+  the connection can see an open transaction's uncommitted rows for its duration
+  (one file ingest). Another *process* writing the same file (e.g. an `argus`
+  CLI command while argusd ingests) waits up to `busy_timeout` (5 s).
 - **`normalize_project_path` is a cross-source join key.** It maps `\`→`/`,
   strips a trailing `/`, preserves empty, and **lowercases on Windows**. Both the
   session-ingest side and the `history.jsonl` prompt side MUST pass project paths

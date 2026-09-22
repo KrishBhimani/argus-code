@@ -181,6 +181,13 @@ log directory:
   a differing `session_id` alone never drops a turn; the one-shot repair removes
   pre-fix copies and is idempotent.
 
+#### `tests/store/test_transactions.py` — atomic writes on the shared connection (Python)
+
+- **Regression (H4).** A failing batch leaves no rows; a caller's transaction
+  isn't committed early; a nested failure rolls back only the inner block;
+  another thread's write waits instead of joining (and being rolled back with)
+  an open transaction; ingest rows and file offset are all-or-nothing.
+
 #### `pipeline.test.ts` — end-to-end ingest pipeline (4 tests)
 
 - **Regression: turn merging.** Incremental re-ingest must NOT reduce

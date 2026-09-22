@@ -269,7 +269,21 @@ def _reclaim_fork_copies(
 def ingest_file(
     adapter: Adapter, file_path: Path, repo: Repository, table: PricingTable
 ) -> None:
-    """Read new bytes from ``file_path`` via ``adapter`` and upsert into ``repo``."""
+    """Read new bytes from ``file_path`` via ``adapter`` and upsert into ``repo``.
+
+    One transaction per call: every row this tick writes (session, turns,
+    tool calls, segments, sub-agents) commits together with the new file
+    offset, or none of it does. A crash can't leave rows stored without
+    their offset (re-read → merged twice) or an offset past rows that were
+    never written (data silently skipped).
+    """
+    with repo.transaction():
+        _ingest_file(adapter, file_path, repo, table)
+
+
+def _ingest_file(
+    adapter: Adapter, file_path: Path, repo: Repository, table: PricingTable
+) -> None:
     file_str = str(file_path)
     from_offset = repo.get_file_offset(file_str)
     result, new_offset = adapter.ingest_file(file_path, from_offset)

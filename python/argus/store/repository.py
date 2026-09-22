@@ -6,13 +6,17 @@ syntax instead of better-sqlite3's ``@name``.
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
 import sqlite3
 import sys
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from ..schema.types import (
     Alert,
@@ -76,14 +80,88 @@ def _row_to_alert(row: sqlite3.Row) -> Alert:
     return Alert.model_validate(d)
 
 
+class _TxState:
+    """Fallback write-lock state for a plain ``sqlite3.Connection``
+    (``open_db`` returns an ``ArgusConnection`` that carries its own)."""
+
+    def __init__(self) -> None:
+        self.write_lock = threading.RLock()
+        self.tx_depth = 0
+
+
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+
+def _writes(fn: _F) -> _F:
+    """Run a write method inside ``Repository.transaction()``.
+
+    Every write goes through the write lock — not only multi-row batches — so
+    a single-statement write from another thread can never land inside (and
+    be rolled back with) a transaction some other thread has open.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(self: "Repository", *args: Any, **kwargs: Any) -> Any:
+        with self.transaction():
+            return fn(self, *args, **kwargs)
+
+    return wrapper  # type: ignore[return-value]
+
+
 class Repository:
     """All SQL is encapsulated here. Methods are mostly direct ports."""
 
     def __init__(self, db: sqlite3.Connection) -> None:
         self.db = db
+        self._tx = db if hasattr(db, "write_lock") else _TxState()
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Atomic unit of writes on the shared connection.
+
+        The outermost call runs ``BEGIN IMMEDIATE`` … ``COMMIT`` (``ROLLBACK``
+        on any exception); a nested call joins it through a SAVEPOINT, so an
+        inner failure undoes only the inner block. The connection-wide write
+        lock is held for the whole outermost block: other writers wait, while
+        readers (which don't take it) proceed — and, sharing the connection,
+        can see this transaction's uncommitted rows until it ends.
+
+        Needed because ``open_db`` uses autocommit (``isolation_level=None``),
+        where ``with conn:`` never issues BEGIN: each row of an
+        ``executemany`` committed on its own.
+        """
+        st = self._tx
+        with st.write_lock:
+            depth = st.tx_depth
+            if depth == 0:
+                self.db.execute("BEGIN IMMEDIATE")
+            else:
+                self.db.execute(f"SAVEPOINT argus_sp{depth}")
+            st.tx_depth = depth + 1
+            try:
+                yield
+            except BaseException:
+                st.tx_depth = depth
+                if depth == 0:
+                    self.db.execute("ROLLBACK")
+                else:
+                    self.db.execute(f"ROLLBACK TO argus_sp{depth}")
+                    self.db.execute(f"RELEASE argus_sp{depth}")
+                raise
+            st.tx_depth = depth
+            if depth == 0:
+                try:
+                    self.db.execute("COMMIT")
+                except BaseException:
+                    if self.db.in_transaction:
+                        self.db.execute("ROLLBACK")
+                    raise
+            else:
+                self.db.execute(f"RELEASE argus_sp{depth}")
 
     # ─── Sessions ──────────────────────────────────────────────────────
 
+    @_writes
     def upsert_session(self, s: Session, *, rewrite_started_at: bool = False) -> None:
         """Insert or update a session row.
 
@@ -174,6 +252,7 @@ class Repository:
 
     # ─── Turns ─────────────────────────────────────────────────────────
 
+    @_writes
     def upsert_turn(self, t: Turn) -> None:
         params = {
             "id": t.id,
@@ -268,6 +347,7 @@ class Repository:
         ).fetchall()
         return [r["id"] for r in rows]
 
+    @_writes
     def delete_duplicated_turns(
         self, session_id: str, message_ids: list[str], tool_use_ids: list[str]
     ) -> None:
@@ -284,6 +364,7 @@ class Repository:
             "DELETE FROM tool_calls WHERE id = ?", [(f"{session_id}:{t}",) for t in tool_use_ids]
         )
 
+    @_writes
     def delete_fork_copy_turns(self, session_id: str, copies: list[Turn]) -> None:
         """Delete tagged fork copies and their calls (matched by turn sequence).
 
@@ -394,6 +475,7 @@ class Repository:
 
     # ─── File offsets / parse errors ───────────────────────────────────
 
+    @_writes
     def set_file_offset(self, path: str, offset: int) -> None:
         self.db.execute(
             """
@@ -409,6 +491,7 @@ class Repository:
         ).fetchone()
         return row["byte_offset"] if row else 0
 
+    @_writes
     def record_parse_error(self, e: dict[str, Any]) -> None:
         self.db.execute(
             """
@@ -433,6 +516,7 @@ class Repository:
 
     # ─── Tool calls ────────────────────────────────────────────────────
 
+    @_writes
     def upsert_tool_calls(self, calls: list[ToolCall]) -> None:
         if not calls:
             return
@@ -449,19 +533,18 @@ class Repository:
             }
             for c in calls
         ]
-        with self.db:
-            self.db.executemany(
-                """
-                INSERT INTO tool_calls (id, session_id, turn_index, tool_name, is_error, input_size, subagent_type, timestamp)
-                VALUES (:id, :session_id, :turn_index, :tool_name, :is_error, :input_size, :subagent_type, :timestamp)
-                ON CONFLICT(id) DO UPDATE SET
-                  turn_index=excluded.turn_index, tool_name=excluded.tool_name,
-                  is_error=MAX(tool_calls.is_error, excluded.is_error),
-                  input_size=excluded.input_size,
-                  subagent_type=excluded.subagent_type, timestamp=excluded.timestamp
-                """,
-                rows,
-            )
+        self.db.executemany(
+            """
+            INSERT INTO tool_calls (id, session_id, turn_index, tool_name, is_error, input_size, subagent_type, timestamp)
+            VALUES (:id, :session_id, :turn_index, :tool_name, :is_error, :input_size, :subagent_type, :timestamp)
+            ON CONFLICT(id) DO UPDATE SET
+              turn_index=excluded.turn_index, tool_name=excluded.tool_name,
+              is_error=MAX(tool_calls.is_error, excluded.is_error),
+              input_size=excluded.input_size,
+              subagent_type=excluded.subagent_type, timestamp=excluded.timestamp
+            """,
+            rows,
+        )
 
     def existing_tool_call_ids(self, ids: list[str]) -> set[str]:
         """Subset of ``ids`` already stored in tool_calls."""
@@ -475,6 +558,7 @@ class Repository:
             )
         return found
 
+    @_writes
     def mark_tool_calls_errored(self, session_id: str, tool_use_ids: list[str]) -> None:
         """Flag calls whose tool_result reported an error, by id.
 
@@ -491,6 +575,7 @@ class Repository:
             [(f"{session_id}:{t}",) for t in tool_use_ids],
         )
 
+    @_writes
     def repair_session_time_columns(self) -> int:
         """Make ``duration_sec`` / ``started_at_ms`` / ``ended_at_ms`` agree with
         the stored ``started_at`` / ``ended_at`` strings; return rows changed.
@@ -764,12 +849,13 @@ class Repository:
         row = self.db.execute("SELECT value FROM app_meta WHERE key = ?", (key,)).fetchone()
         return None if row is None else str(row["value"])
 
+    @_writes
     def set_app_meta(self, key: str, value: str) -> None:
         self.db.execute("INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)", (key, value))
-        self.db.commit()
 
     # ─── Prompts ───────────────────────────────────────────────────────
 
+    @_writes
     def insert_prompts(self, rows: list[Prompt]) -> None:
         if not rows:
             return
@@ -783,14 +869,13 @@ class Repository:
             }
             for r in rows
         ]
-        with self.db:
-            self.db.executemany(
-                """
-                INSERT INTO prompts (timestamp_ms, project_path, display, pasted_chars, is_slash)
-                VALUES (:timestamp_ms, :project_path, :display, :pasted_chars, :is_slash)
-                """,
-                params,
-            )
+        self.db.executemany(
+            """
+            INSERT INTO prompts (timestamp_ms, project_path, display, pasted_chars, is_slash)
+            VALUES (:timestamp_ms, :project_path, :display, :pasted_chars, :is_slash)
+            """,
+            params,
+        )
 
     def search_prompts(
         self,
@@ -877,6 +962,7 @@ class Repository:
 
     # ─── Transcript segments ───────────────────────────────────────────
 
+    @_writes
     def upsert_transcript_segments(self, rows: list[TranscriptSegment]) -> None:
         if not rows:
             return
@@ -891,18 +977,17 @@ class Repository:
             }
             for r in rows
         ]
-        with self.db:
-            self.db.executemany(
-                """
-                INSERT INTO transcript_segments (uid, session_id, timestamp, role, text, tool_use_id)
-                VALUES (:uid, :session_id, :timestamp, :role, :text, :tool_use_id)
-                ON CONFLICT(uid) DO UPDATE SET
-                  session_id=excluded.session_id, timestamp=excluded.timestamp,
-                  role=excluded.role, text=excluded.text,
-                  tool_use_id=excluded.tool_use_id
-                """,
-                params,
-            )
+        self.db.executemany(
+            """
+            INSERT INTO transcript_segments (uid, session_id, timestamp, role, text, tool_use_id)
+            VALUES (:uid, :session_id, :timestamp, :role, :text, :tool_use_id)
+            ON CONFLICT(uid) DO UPDATE SET
+              session_id=excluded.session_id, timestamp=excluded.timestamp,
+              role=excluded.role, text=excluded.text,
+              tool_use_id=excluded.tool_use_id
+            """,
+            params,
+        )
 
     def count_segments_for_session(self, session_id: str) -> int:
         row = self.db.execute(
@@ -1076,6 +1161,7 @@ class Repository:
             "sessions": row["sessions"] if row else 0,
         }
 
+    @_writes
     def clear_all_segments(self) -> None:
         self.db.execute("DELETE FROM transcript_segments")
 
@@ -1129,6 +1215,7 @@ class Repository:
 
     # ─── Alerts ────────────────────────────────────────────────────────
 
+    @_writes
     def upsert_alert(self, a: Alert) -> int:
         """Insert or update an alert keyed on (detector, dedup_key).
 
@@ -1197,6 +1284,7 @@ class Repository:
             ).fetchall()
         return [_row_to_alert(r) for r in rows]
 
+    @_writes
     def resolve_stale_alerts(
         self, *, detector: str, active_dedup_keys: list[str]
     ) -> int:
@@ -1223,6 +1311,7 @@ class Repository:
             )
         return cur.rowcount
 
+    @_writes
     def mark_alert_seen(self, alert_id: int) -> bool:
         cur = self.db.execute(
             "UPDATE alerts SET seen_at = ? WHERE id = ? AND seen_at IS NULL",
@@ -1249,6 +1338,7 @@ class Repository:
         self.set_search_indexing_enabled(has_data)
         return has_data
 
+    @_writes
     def set_search_indexing_enabled(self, enabled: bool) -> None:
         self.db.execute(
             "INSERT OR REPLACE INTO app_meta (key, value) VALUES ('enable_transcript_search', ?)",

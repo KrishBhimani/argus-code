@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import threading
 from pathlib import Path
 
 from .migrations.inline import (
@@ -20,6 +21,23 @@ from .migrations.inline import (
 )
 
 SCHEMA_VERSION = 7
+
+
+class ArgusConnection(sqlite3.Connection):
+    """sqlite3 connection carrying the state for ``Repository.transaction()``.
+
+    One connection is shared by the request threads, the watcher, first-run,
+    search backfill and the scheduler. In autocommit mode an explicit BEGIN
+    is connection-wide, so a write from thread B issued while thread A holds
+    a transaction would silently become part of A's (and be rolled back with
+    it). ``write_lock`` serialises writers; ``tx_depth`` is only touched by
+    the thread holding it and drives BEGIN vs SAVEPOINT nesting.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.write_lock = threading.RLock()
+        self.tx_depth = 0
 
 
 class FTS5NotAvailableError(RuntimeError):
@@ -126,6 +144,7 @@ def open_db(path: str | Path, *, read_only: bool = False) -> sqlite3.Connection:
         conn = sqlite3.connect(
             uri,
             uri=True,
+            factory=ArgusConnection,
             check_same_thread=False,
             isolation_level=None,
             cached_statements=0,
@@ -153,6 +172,7 @@ def open_db(path: str | Path, *, read_only: bool = False) -> sqlite3.Connection:
     # compilation cache (sqlite3_prepare_v2 fast path) still applies.
     conn = sqlite3.connect(
         str(p),
+        factory=ArgusConnection,
         check_same_thread=False,
         isolation_level=None,
         cached_statements=0,
