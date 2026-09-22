@@ -39,7 +39,7 @@ def run_foreground(
     stop_event = stop_event or threading.Event()
     me = os.getpid()
 
-    existing = pidfile.live_pid(data_dir)
+    existing = pidfile.running_pid(data_dir)
     if existing is not None and existing != me:
         raise DaemonAlreadyRunning(existing)
 

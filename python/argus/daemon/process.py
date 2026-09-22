@@ -57,7 +57,7 @@ def wait_for_pidfile(data_dir: Path, timeout: float = 3.0) -> int | None:
     """Poll until the child writes its PID file; return the PID or None."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        pid = pidfile.live_pid(data_dir)
+        pid = pidfile.running_pid(data_dir)
         if pid is not None:
             return pid
         time.sleep(0.05)
@@ -72,10 +72,17 @@ def stop_daemon(data_dir: Path, timeout: float = 10.0) -> bool:
     another process after an unclean exit is never touched; the stale file is
     just cleared.
     """
-    pid = pidfile.live_pid(data_dir)
-    if pid is None:
+    rec = pidfile.read_record(data_dir)
+    state = pidfile.check(rec)
+    if state == pidfile.UNVERIFIED:
+        # Alive, identity unknowable: never kill on a PID alone, and keep the
+        # file (it may be a real argusd from an older version).
+        pidfile.running_pid(data_dir)  # logs how to resolve it
+        return False
+    if state == pidfile.STALE or rec is None:
         pidfile.remove(data_dir)  # clear any stale file
         return False
+    pid = rec.pid
 
     if os.name == "nt":
         _terminate_windows(pid)

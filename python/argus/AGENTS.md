@@ -27,10 +27,14 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   start time: `/proc/<pid>/stat` field 22 / `ps -o lstart=` / Windows
   `GetProcessTimes`); every "is argusd running?" decision (stop, collision guard,
   `argus start` read-only mode, `daemon status`) goes through
-  `pidfile.live_pid()` / `is_ours()`, which require the same PID *and* start
-  time. Legacy bare-PID files are trusted only if the process's command line is
-  argusd's (POSIX); otherwise they are stale and never signalled. The Windows
-  branch is unit-tested with a fake `kernel32`, not exercised on Windows in CI.
+  `pidfile.check()`: VERIFIED (same start time, or with no start time to
+  compare, a command line that is `argus … daemon run`), STALE (dead, different
+  start time, visibly another program) or UNVERIFIED (alive, identity
+  unreadable — e.g. an old bare-PID file on Windows). **Only VERIFIED is ever
+  signalled** (`live_pid`); "don't start a second writer" decisions (collision
+  guard, `daemon start`, `argus start` read-only mode) use `running_pid`, which
+  also counts UNVERIFIED and tells the user how to clear it. The Windows branch
+  is unit-tested with a fake `kernel32`, not exercised on Windows in CI.
 - `detectors/` — alert detectors (registry + individual rules like tool-error-rate spike).
 - `pricing/` — pricing table load / refresh / compute; bundled JSON under repo `pricing/`.
 - `scaffold/` — `argus claude` scaffolding (templates, snapshot, storage).

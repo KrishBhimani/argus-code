@@ -146,3 +146,62 @@ def test_windows_dispatch_uses_creation_time(monkeypatch):
     monkeypatch.setattr(pidfile, "_is_windows", lambda: True)
     monkeypatch.setattr(pidfile, "_start_token_windows", lambda pid: "tok")
     assert pidfile.process_start_token(1) == "tok"
+
+
+# ─── Review follow-ups: identity that can't be determined ──────────────
+
+
+def test_own_file_without_start_token_is_still_recognised(tmp_path, monkeypatch):
+    """If the start time can't be read (no /proc, no ps), the daemon's own
+    file must not look stale — or start would time out and stop would drop
+    the PID file of a live daemon."""
+    monkeypatch.setattr(pidfile, "process_start_token", lambda pid: None)
+    monkeypatch.setattr(pidfile, "_cmdline", lambda pid: "python -P -m argus.cli daemon run --data-dir x")
+    pidfile.write(tmp_path, os.getpid())
+    assert pidfile.live_pid(tmp_path) == os.getpid()
+
+
+def test_console_script_command_line_counts_as_argusd(monkeypatch):
+    monkeypatch.setattr(pidfile, "process_start_token", lambda pid: None)
+    monkeypatch.setattr(pidfile, "_cmdline", lambda pid: "/usr/local/bin/argus daemon run")
+    assert pidfile.check(pidfile.PidRecord(os.getpid(), None)) == pidfile.VERIFIED
+
+
+def test_unverifiable_live_pid_blocks_a_second_daemon_but_is_never_killed(
+    tmp_path, monkeypatch, unrelated_process
+):
+    """Windows upgrade case: an old argusd wrote a bare PID and its identity
+    can't be checked. Starting a second writer next to it is worse than asking
+    the user, and killing it on a PID alone is what this fix forbids."""
+    monkeypatch.setattr(pidfile, "_cmdline", lambda pid: None)
+    monkeypatch.setattr(pidfile, "_image_name", lambda pid: None)
+    _write_record(tmp_path, unrelated_process.pid, None)
+
+    assert pidfile.check(pidfile.read_record(tmp_path)) == pidfile.UNVERIFIED
+    assert pidfile.live_pid(tmp_path) is None
+    assert pidfile.running_pid(tmp_path) == unrelated_process.pid
+    assert process.stop_daemon(tmp_path, timeout=0.5) is False
+    assert unrelated_process.poll() is None
+    assert pidfile.read(tmp_path) == unrelated_process.pid  # kept: not provably stale
+
+    from argus.cli import app
+
+    res = CliRunner().invoke(app, ["daemon", "start", "--data-dir", str(tmp_path)])
+    assert "already running" in res.output and res.exit_code == 0
+
+
+def test_windows_image_name_that_is_not_python_is_stale(monkeypatch, unrelated_process):
+    monkeypatch.setattr(pidfile, "_cmdline", lambda pid: None)
+    monkeypatch.setattr(pidfile, "_image_name", lambda pid: "notepad.exe")
+    assert pidfile.check(pidfile.PidRecord(unrelated_process.pid, None)) == pidfile.STALE
+
+
+class _FakeKernel32Image(_FakeKernel32):
+    def QueryFullProcessImageNameW(self, handle, flags, buf, size):  # noqa: N802
+        buf.value = "C:\\Python312\\python.exe"
+        return 1
+
+
+def test_windows_image_name_reads_exe_basename(monkeypatch):
+    monkeypatch.setattr(pidfile, "_kernel32", lambda: _FakeKernel32Image(creation=1))
+    assert pidfile._image_name_windows(4242) == "python.exe"

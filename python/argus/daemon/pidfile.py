@@ -11,15 +11,20 @@ Start-time tokens: ``/proc/<pid>/stat`` field 22 (clock ticks since boot) on
 Linux, ``ps -o lstart=`` on other POSIX systems, ``GetProcessTimes`` creation
 time (via ctypes) on Windows. No psutil — dependencies stay minimal.
 
-Files written by older versions hold a bare PID. Those are *unverified*: they
-are trusted only when the process's command line is argusd's (POSIX), never
-killed on PID alone, and otherwise treated as stale.
+Identity is three-state (:func:`check`): VERIFIED (same start time, or — when
+no start time can be compared, e.g. a bare-PID file from an older argus — a
+command line that is ``argus … daemon run``), STALE (dead, different start
+time, or visibly some other program) and UNVERIFIED (alive but nothing can be
+compared, e.g. Windows can't read another process's command line). Only a
+VERIFIED process is ever signalled; an UNVERIFIED one still blocks starting a
+second writer and the user is told how to clear it.
 """
 from __future__ import annotations
 
 import json
 import logging
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -75,29 +80,63 @@ def remove(data_dir: Path) -> None:
         pass
 
 
-def is_ours(rec: PidRecord | None) -> bool:
-    """True only if ``rec`` still names the argusd process that wrote it."""
+VERIFIED = "verified"
+UNVERIFIED = "unverified"
+STALE = "stale"
+
+# `python -m argus.cli daemon run …` (spawn_daemon) or `…/argus daemon run`
+# (console script, e.g. from a service manager).
+_ARGUSD_CMD = re.compile(r"\bargus(?:\.cli)?(?:\.exe)?\s+daemon\s+run\b")
+_PYTHON_IMAGES = re.compile(r"^(python|pythonw|argus)[\d.]*(\.exe)?$", re.IGNORECASE)
+
+
+def check(rec: PidRecord | None) -> str:
+    """Is ``rec`` the argusd that wrote it? VERIFIED / UNVERIFIED / STALE."""
     if rec is None or not is_running(rec.pid):
-        return False
+        return STALE
     if rec.start is not None:
-        return process_start_token(rec.pid) == rec.start
-    # Legacy bare PID: accept only a process that is visibly argusd.
+        token = process_start_token(rec.pid)
+        if token is not None:
+            return VERIFIED if token == rec.start else STALE
+    # No start time to compare (legacy bare-PID file, or the token is
+    # unreadable right now): fall back to what the process visibly is.
     cmd = _cmdline(rec.pid)
-    if cmd is not None and "argus.cli" in cmd and "daemon" in cmd:
-        return True
-    logger.warning(
-        "argusd PID file %s holds a bare PID (%d) from an older argus that can't be "
-        "verified as argusd; treating it as stale and not acting on that process.",
-        PID_FILENAME,
-        rec.pid,
-    )
-    return False
+    if cmd is not None:
+        return VERIFIED if _ARGUSD_CMD.search(cmd) else STALE
+    image = _image_name(rec.pid)
+    if image is not None and not _PYTHON_IMAGES.match(image):
+        return STALE
+    return UNVERIFIED
+
+
+def is_ours(rec: PidRecord | None) -> bool:
+    """True only if ``rec`` provably still names the argusd that wrote it."""
+    return check(rec) == VERIFIED
 
 
 def live_pid(data_dir: Path) -> int | None:
-    """PID of the running argusd that wrote the PID file, else None."""
+    """PID of the argusd that wrote the PID file, if VERIFIED (safe to signal)."""
     rec = read_record(data_dir)
     return rec.pid if is_ours(rec) else None
+
+
+def running_pid(data_dir: Path) -> int | None:
+    """PID that may be a running argusd (VERIFIED or UNVERIFIED), else None.
+
+    For "don't start a second writer" decisions, where wrongly assuming the
+    daemon is gone is worse than asking the user. Never use it to kill.
+    """
+    rec = read_record(data_dir)
+    state = check(rec)
+    if state == UNVERIFIED:
+        logger.warning(
+            "PID %d in %s is alive but can't be verified as argusd (older argus, "
+            "or its identity is unreadable). Not touching it; if it isn't argusd, "
+            "delete that file.",
+            rec.pid,  # type: ignore[union-attr]
+            path(data_dir),
+        )
+    return rec.pid if rec is not None and state != STALE else None
 
 
 def is_running(pid: int | None) -> bool:
@@ -158,6 +197,30 @@ def _cmdline(pid: int) -> str | None:
     except (OSError, subprocess.SubprocessError):
         return None
     return out or None
+
+
+def _image_name(pid: int) -> str | None:
+    """Executable basename (Windows only; POSIX has the full command line)."""
+    return _image_name_windows(pid) if _is_windows() else None
+
+
+def _image_name_windows(pid: int) -> str | None:
+    import ctypes
+    from ctypes import wintypes
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    kernel32 = _kernel32()
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return None
+    try:
+        buf = ctypes.create_unicode_buffer(32768)
+        size = wintypes.DWORD(len(buf))
+        if not kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+            return None
+        return buf.value.replace("\\", "/").rsplit("/", 1)[-1] or None
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def _is_windows() -> bool:

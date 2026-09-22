@@ -63,7 +63,10 @@ def test_run_foreground_writes_pid_runs_and_cleans_up(tmp_path, monkeypatch):
 def test_run_foreground_refuses_when_live_daemon_exists(tmp_path, monkeypatch):
     pidfile.write(tmp_path, 999999)  # a PID that isn't us
     # The guard trusts only a *verified* argusd (same PID and start time).
-    monkeypatch.setattr(pidfile, "is_ours", lambda rec: rec is not None and rec.pid == 999999)
+    monkeypatch.setattr(
+        pidfile, "check",
+        lambda rec: pidfile.VERIFIED if rec is not None and rec.pid == 999999 else pidfile.STALE,
+    )
     monkeypatch.setattr(service, "CoreRuntime", _FakeRuntime)
 
     with pytest.raises(service.DaemonAlreadyRunning):

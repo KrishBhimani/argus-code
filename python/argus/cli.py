@@ -98,7 +98,7 @@ def start(
     from .core.runtime import CoreRuntime, NoAdaptersError
     from .daemon import pidfile
 
-    daemon_pid = pidfile.live_pid(data_dir)
+    daemon_pid = pidfile.running_pid(data_dir)
     if daemon_pid is not None:
         read_only = True
         logger.info("argusd %d active — dashboard is read-only.", daemon_pid)
@@ -420,7 +420,7 @@ def daemon_start(
     from .daemon import pidfile
     from .daemon.process import spawn_daemon, wait_for_pidfile
 
-    existing = pidfile.live_pid(data_dir)
+    existing = pidfile.running_pid(data_dir)
     if existing is not None:
         typer.echo(f"daemon already running, PID {existing}")
         raise typer.Exit(code=0)
@@ -479,7 +479,7 @@ def daemon_status(
     from .daemon import pidfile
     from .daemon.logging import log_path
 
-    pid = pidfile.live_pid(data_dir)
+    pid = pidfile.running_pid(data_dir)
     if pid is None:
         stale = pidfile.read(data_dir)
         if stale is not None:
@@ -497,6 +497,12 @@ def daemon_status(
     except OSError:
         uptime = "unknown"
 
+    if pidfile.live_pid(data_dir) is None:
+        typer.echo(
+            f"argusd: possibly running (PID {pid} is alive but can't be verified "
+            f"as argusd). If it isn't, delete {pidfile.path(data_dir)}."
+        )
+        raise typer.Exit(code=0)
     typer.echo(f"argusd: running (PID {pid}, uptime {uptime}).")
     typer.echo(f"Log: {log_path(data_dir)}")
 

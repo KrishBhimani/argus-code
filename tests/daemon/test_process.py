@@ -52,7 +52,9 @@ def test_stop_daemon_signals_live_pid_posix(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pidfile, "is_running", lambda pid: liveness["alive"])
     # Identity verified (same start time) — only then may stop signal it.
-    monkeypatch.setattr(pidfile, "is_ours", lambda rec: liveness["alive"])
+    monkeypatch.setattr(
+        pidfile, "check", lambda rec: pidfile.VERIFIED if liveness["alive"] else pidfile.STALE
+    )
 
     def fake_kill(pid, sig):
         sent["pid"] = pid
@@ -77,7 +79,9 @@ def test_stop_daemon_terminates_live_pid_windows(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pidfile, "is_running", lambda pid: liveness["alive"])
     # Identity verified (same start time) — only then may stop signal it.
-    monkeypatch.setattr(pidfile, "is_ours", lambda rec: liveness["alive"])
+    monkeypatch.setattr(
+        pidfile, "check", lambda rec: pidfile.VERIFIED if liveness["alive"] else pidfile.STALE
+    )
 
     def fake_terminate(pid):
         terminated["pid"] = pid
