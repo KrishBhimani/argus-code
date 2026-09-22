@@ -356,11 +356,28 @@ class Repository:
                 VALUES (:id, :session_id, :turn_index, :tool_name, :is_error, :input_size, :subagent_type, :timestamp)
                 ON CONFLICT(id) DO UPDATE SET
                   turn_index=excluded.turn_index, tool_name=excluded.tool_name,
-                  is_error=excluded.is_error, input_size=excluded.input_size,
+                  is_error=MAX(tool_calls.is_error, excluded.is_error),
+                  input_size=excluded.input_size,
                   subagent_type=excluded.subagent_type, timestamp=excluded.timestamp
                 """,
                 rows,
             )
+
+    def mark_tool_calls_errored(self, session_id: str, tool_use_ids: list[str]) -> None:
+        """Flag calls whose tool_result reported an error, by id.
+
+        The result usually lands in a later ingest tick than its tool_use, so
+        this runs against whatever call rows exist — stored this tick or any
+        earlier one. ``is_error`` only ever goes 0 → 1 (``upsert_tool_calls``
+        keeps the MAX), so a re-read that sees a call without its result can't
+        clear the flag. Ids with no stored call yet are a no-op.
+        """
+        if not tool_use_ids:
+            return
+        self.db.executemany(
+            "UPDATE tool_calls SET is_error = 1 WHERE id = ? AND is_error = 0",
+            [(f"{session_id}:{t}",) for t in tool_use_ids],
+        )
 
     def count_tool_calls_for_session(self, session_id: str) -> int:
         row = self.db.execute(

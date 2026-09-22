@@ -15,7 +15,7 @@ from ...schema.types import RawSessionHeader
 from ...store.repository import normalize_project_path
 from ..base import AdapterIngestResult
 from .discover import MetaPeek, native_id_for
-from .extract_tool_calls import extract_tool_calls
+from .extract_tool_calls import errored_call_ids, extract_tool_calls
 from .extract_transcript import extract_transcript_segments
 from .extract_turns import extract_turns
 from .lines import Line, read_lines
@@ -138,6 +138,7 @@ def ingest_codex_file(
             header=_header(state, path),
             turns=turns,
             tool_calls=tool_calls,
+            tool_error_ids=errored_call_ids(lines, meta.skip_before_ordinal),
             segments=segments,
             parse_errors=errors,
         ),

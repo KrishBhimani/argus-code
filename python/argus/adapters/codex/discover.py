@@ -229,10 +229,14 @@ class ThreadIndex:
             return None
         sig = (st.st_size, st.st_mtime_ns)
         if path in self._meta and self._sig.get(path) == sig:
-            return self._meta[path]
-        m = peek_meta(path)
-        self._meta[path] = m
-        self._sig[path] = sig
+            m = self._meta[path]
+        else:
+            m = peek_meta(path)
+            self._meta[path] = m
+            self._sig[path] = sig
+        # Register on every peek, cache hit or miss: refresh() clears
+        # _children, and an unchanged child is a cache hit — returning early
+        # left the parent childless after a second refresh.
         if m is not None and m.parent_thread_id:
             kids = self._children.setdefault(m.parent_thread_id, [])
             if path not in kids:

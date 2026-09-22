@@ -64,6 +64,10 @@ class AdapterIngestResult(BaseModel):
     # pipeline treats empty as "no data", not "delete existing rows".
     tool_calls: list[RawToolCall] = []
     segments: list[RawSegment] = []
+    # tool_use_ids whose result in THIS read reports an error. The call itself
+    # may have been stored by an earlier tick, so the collector applies these
+    # by id rather than trusting ``RawToolCall.is_error`` alone.
+    tool_error_ids: list[str] = []
 
 
 @runtime_checkable

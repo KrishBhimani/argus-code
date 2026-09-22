@@ -99,11 +99,15 @@ def _turn(native_id: str, seq: int, ts: str, u: dict[str, int], state: TickState
 def extract_turns(lines: list[Line], state: TickState) -> tuple[list[RawTurnEvent], list[int]]:
     """Return (turns, boundaries). ``boundaries[i]`` is the byte offset of the
     line that closed turn ``i``; tool calls before it (and after
-    ``boundaries[i-1]``) belong to turn ``i``. Mutates ``state``."""
+    ``boundaries[i-1]``) belong to turn ``i``. Mutates ``state``.
+
+    A turn's ``sequence`` is that closing line's byte offset (the same offset
+    as its ``tc@``/``msg@`` id): monotonic across the whole file, so it doesn't
+    depend on which tick read the line. A per-call counter restarted at 0 on
+    every tick and scrambled the timeline order."""
     turns: list[RawTurnEvent] = []
     bounds: list[int] = []
     pending_calls = 0
-    seq = 0
     cutoff = state.meta.skip_before_ordinal
     zero = {k: 0 for k in USAGE_KEYS}
 
@@ -120,10 +124,9 @@ def extract_turns(lines: list[Line], state: TickState) -> tuple[list[RawTurnEven
                 and line.payload.get("role") == "assistant"
             ):
                 ts = state.meta.started_at or "1970-01-01T00:00:00.000Z"
-                turns.append(_turn(f"msg@{line.offset}", seq, ts, zero, state, pending_calls))
+                turns.append(_turn(f"msg@{line.offset}", line.offset, ts, zero, state, pending_calls))
                 bounds.append(line.offset)
                 pending_calls = 0
-                seq += 1
             continue
         if line.kind != "event_msg" or line.payload.get("type") != "token_count":
             continue
@@ -136,8 +139,7 @@ def extract_turns(lines: list[Line], state: TickState) -> tuple[list[RawTurnEven
         u = _usage_for(line, state)
         if u is None:
             continue
-        turns.append(_turn(f"tc@{line.offset}", seq, line.timestamp or state.meta.started_at, u, state, pending_calls))
+        turns.append(_turn(f"tc@{line.offset}", line.offset, line.timestamp or state.meta.started_at, u, state, pending_calls))
         bounds.append(line.offset)
         pending_calls = 0
-        seq += 1
     return turns, bounds

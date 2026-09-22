@@ -86,18 +86,10 @@ def _subagent_type(p: dict[str, Any]) -> str | None:
     return t if isinstance(t, str) and t else None
 
 
-def extract_tool_calls(
-    lines: list[Line],
-    turns: list[RawTurnEvent],
-    bounds: list[int],
-    skip_before_ordinal: int | None,
-) -> list[RawToolCall]:
-    """Emit one RawToolCall per call item, attributed to the turn whose
-    ``token_count`` follows it. Calls after the last boundary belong to a turn
-    that has not closed yet and are left for the next tick (the holdback rule
-    in ``ingest_file`` guarantees they will be re-read)."""
-    if not bounds:
-        return []
+def _scan(
+    lines: list[Line], skip_before_ordinal: int | None
+) -> tuple[list[tuple[Line, dict[str, Any], str]], set[str]]:
+    """(call items, call_ids whose result in these lines reports an error)."""
     errors: set[str] = set()
     calls: list[tuple[Line, dict[str, Any], str]] = []
 
@@ -130,6 +122,34 @@ def extract_tool_calls(
                     failed = (_is_int(code) and code != 0) or item.get("error") not in (None, "")
                     if isinstance(iid, str) and failed:
                         errors.add(iid)
+    return calls, errors
+
+
+def errored_call_ids(lines: list[Line], skip_before_ordinal: int | None) -> list[str]:
+    """call_ids whose output/end event in these lines reports an error.
+
+    Returned separately from the calls because an output can land after the
+    tick's last ``token_count`` — the holdback then hands it to the next tick,
+    which no longer holds the call. The collector applies these by id to calls
+    stored by any earlier tick.
+    """
+    return sorted(_scan(lines, skip_before_ordinal)[1])
+
+
+def extract_tool_calls(
+    lines: list[Line],
+    turns: list[RawTurnEvent],
+    bounds: list[int],
+    skip_before_ordinal: int | None,
+) -> list[RawToolCall]:
+    """Emit one RawToolCall per call item, attributed to the turn whose
+    ``token_count`` follows it. Calls after the last boundary belong to a turn
+    that has not closed yet and are left for the next tick (the holdback rule
+    in ``ingest_file`` guarantees they will be re-read). ``turn_index`` is the
+    owning turn's file-wide ``sequence``."""
+    if not bounds:
+        return []
+    calls, errors = _scan(lines, skip_before_ordinal)
 
     out: list[RawToolCall] = []
     block_by_turn: dict[int, int] = {}
@@ -142,7 +162,7 @@ def extract_tool_calls(
         out.append(
             RawToolCall(
                 native_turn_id=turns[idx].native_turn_id,
-                turn_index=idx,
+                turn_index=turns[idx].sequence,
                 block_index=block,
                 tool_name=_tool_name(p),
                 tool_use_id=call_id,

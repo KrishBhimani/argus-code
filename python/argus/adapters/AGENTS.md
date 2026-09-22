@@ -90,6 +90,19 @@ per-file context across ticks, `history_jsonl.py` feeds the Prompts page.
   `thread_settings_applied`, else `unknown` (never a fabricated default). Legacy
   raw files emit one zero-token turn per assistant message so tool calls and
   transcript still exist.
+- **Sequences are file-wide.** A turn's `sequence` is the byte offset of the
+  line that closed it (the same offset as its `tc@`/`msg@` id) and a call's
+  `turn_index` is its turn's `sequence`, so rows don't depend on how the watcher
+  chunked the file (`tests/collector/test_codex_incremental_invariant.py`).
+- **Errors travel by id.** A `function_call_output` / `mcp_tool_call_end` /
+  `patch_apply_end` / `item_completed` can land after the tick's last
+  `token_count` and be held back into the next tick, which no longer holds the
+  call; `errored_call_ids()` is returned as `tool_error_ids` and the collector
+  applies it to the stored call. (Write order function_call → token_count →
+  output is inferred, not observed on real rollouts.)
+- **`ThreadIndex` re-registers parent→child links on every `_peek`**, cache hit
+  or miss — `refresh()` clears `_children`, and unchanged children are cache
+  hits.
 - **Holdback.** A tick consumes up to the last `token_count` line; the tail waits
   for the next tick so every tool call/segment has its turn. A lone `session_meta`
   at offset 0 is consumed on its own. Legacy raw and `.zst` files consume whole.
