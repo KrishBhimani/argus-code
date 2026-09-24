@@ -205,3 +205,40 @@ class _FakeKernel32Image(_FakeKernel32):
 def test_windows_image_name_reads_exe_basename(monkeypatch):
     monkeypatch.setattr(pidfile, "_kernel32", lambda: _FakeKernel32Image(creation=1))
     assert pidfile._image_name_windows(4242) == "python.exe"
+
+
+# ─── Review follow-ups (2): honest stop output, re-verify before force-kill ─
+
+
+def test_stop_on_unverifiable_pid_says_so_instead_of_not_running(
+    tmp_path, monkeypatch, unrelated_process
+):
+    """`daemon stop` used to print "argusd is not running." here, which it
+    hadn't checked; it had just declined to act. The user must learn that
+    something may still be running and how to resolve it."""
+    from argus.cli import app
+
+    monkeypatch.setattr(pidfile, "_cmdline", lambda pid: None)
+    monkeypatch.setattr(pidfile, "_image_name", lambda pid: None)
+    _write_record(tmp_path, unrelated_process.pid, None)
+
+    res = CliRunner().invoke(app, ["daemon", "stop", "--data-dir", str(tmp_path)])
+    assert "not running" not in res.output
+    assert "can't be verified" in res.output and str(pidfile.path(tmp_path)) in res.output
+    assert res.exit_code == 1  # nothing was stopped
+    assert unrelated_process.poll() is None
+
+
+def test_force_kill_after_timeout_reverifies_identity(tmp_path, monkeypatch):
+    """Between the stop signal and the force-kill (up to `timeout` later) the
+    daemon may exit and its PID be reused; the force-kill must not hit that."""
+    _write_record(tmp_path, 4242, "tok")
+    verdicts = iter([pidfile.VERIFIED])  # first check: ours; afterwards: stale
+    monkeypatch.setattr(pidfile, "check", lambda rec: next(verdicts, pidfile.STALE))
+    monkeypatch.setattr(pidfile, "is_running", lambda pid: True)  # PID stays taken
+    kills = []
+    monkeypatch.setattr(process, "_terminate_windows", lambda pid: kills.append(pid))
+    monkeypatch.setattr(process.os, "kill", lambda pid, sig: kills.append(pid), raising=False)
+
+    process.stop_daemon(tmp_path, timeout=0.2)
+    assert kills == [4242]  # the initial stop only; no force-kill of the reused PID

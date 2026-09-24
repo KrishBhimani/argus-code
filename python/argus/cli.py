@@ -445,10 +445,21 @@ def daemon_stop(
     data_dir: Path = typer.Option(_default_data_dir(), "--data-dir"),
 ) -> None:
     """Stop argusd gracefully (removes the PID file)."""
+    from .daemon import pidfile
     from .daemon.process import stop_daemon
 
     if stop_daemon(data_dir):
         typer.echo("argusd stopped.")
+    elif pidfile.check(pidfile.read_record(data_dir)) == pidfile.UNVERIFIED:
+        # stop_daemon declined to signal a PID it can't identify; don't claim
+        # nothing is running.
+        typer.echo(
+            f"argusd not stopped: PID {pidfile.read(data_dir)} is alive but can't be "
+            f"verified as argusd, so it was left alone. If it is an older argusd, stop "
+            f"that process yourself; if it isn't argusd, delete {pidfile.path(data_dir)}.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
     else:
         typer.echo("argusd is not running.")
 

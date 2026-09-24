@@ -31,7 +31,11 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   compare, a command line that is `argus … daemon run`), STALE (dead, different
   start time, visibly another program) or UNVERIFIED (alive, identity
   unreadable — e.g. an old bare-PID file on Windows). **Only VERIFIED is ever
-  signalled** (`live_pid`); "don't start a second writer" decisions (collision
+  signalled** (`live_pid`), and `stop_daemon` re-verifies before its
+  after-timeout force-kill (the PID may have been reused while it waited).
+  `argus daemon stop` on an UNVERIFIED PID says so and exits 1; it never
+  reports "not running" for a process it declined to check.
+  "Don't start a second writer" decisions (collision
   guard, `daemon start`, `argus start` read-only mode) use `running_pid`, which
   also counts UNVERIFIED and tells the user how to clear it. The Windows branch
   is unit-tested with a fake `kernel32`, not exercised on Windows in CI.

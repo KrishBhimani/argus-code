@@ -100,7 +100,11 @@ def stop_daemon(data_dir: Path, timeout: float = 10.0) -> bool:
             return True
         time.sleep(0.1)
 
-    # Still alive after timeout — force kill.
+    # Still alive after timeout — force kill, but only if it is still the same
+    # process: it may have exited and had its PID reused while we waited.
+    if not pidfile.is_ours(rec):
+        pidfile.remove(data_dir)
+        return True
     if os.name == "nt":
         _terminate_windows(pid)
     else:
