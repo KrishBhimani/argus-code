@@ -57,19 +57,32 @@ def wait_for_pidfile(data_dir: Path, timeout: float = 3.0) -> int | None:
     """Poll until the child writes its PID file; return the PID or None."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        pid = pidfile.read(data_dir)
-        if pid is not None and pidfile.is_running(pid):
+        pid = pidfile.running_pid(data_dir)
+        if pid is not None:
             return pid
         time.sleep(0.05)
     return None
 
 
 def stop_daemon(data_dir: Path, timeout: float = 10.0) -> bool:
-    """Stop a running daemon. Returns True if one was running, else False."""
-    pid = pidfile.read(data_dir)
-    if pid is None or not pidfile.is_running(pid):
+    """Stop a running daemon. Returns True if one was running, else False.
+
+    Only a process verified as the argusd that wrote the PID file is signalled
+    (``pidfile.live_pid``: same PID *and* same start time). A PID reused by
+    another process after an unclean exit is never touched; the stale file is
+    just cleared.
+    """
+    rec = pidfile.read_record(data_dir)
+    state = pidfile.check(rec)
+    if state == pidfile.UNVERIFIED:
+        # Alive, identity unknowable: never kill on a PID alone, and keep the
+        # file (it may be a real argusd from an older version).
+        pidfile.running_pid(data_dir)  # logs how to resolve it
+        return False
+    if state == pidfile.STALE or rec is None:
         pidfile.remove(data_dir)  # clear any stale file
         return False
+    pid = rec.pid
 
     if os.name == "nt":
         _terminate_windows(pid)
@@ -87,7 +100,11 @@ def stop_daemon(data_dir: Path, timeout: float = 10.0) -> bool:
             return True
         time.sleep(0.1)
 
-    # Still alive after timeout — force kill.
+    # Still alive after timeout — force kill, but only if it is still the same
+    # process: it may have exited and had its PID reused while we waited.
+    if not pidfile.is_ours(rec):
+        pidfile.remove(data_dir)
+        return True
     if os.name == "nt":
         _terminate_windows(pid)
     else:

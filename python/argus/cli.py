@@ -98,15 +98,16 @@ def start(
     from .core.runtime import CoreRuntime, NoAdaptersError
     from .daemon import pidfile
 
-    daemon_pid = pidfile.read(data_dir)
-    if daemon_pid is not None and pidfile.is_running(daemon_pid):
+    daemon_pid = pidfile.running_pid(data_dir)
+    if daemon_pid is not None:
         read_only = True
         logger.info("argusd %d active — dashboard is read-only.", daemon_pid)
     else:
         read_only = False
-        if daemon_pid is not None:
+        stale_pid = pidfile.read(data_dir)
+        if stale_pid is not None:
             logger.info(
-                "Stale argusd PID file (process %d gone) — ignoring.", daemon_pid
+                "Stale argusd PID file (PID %d is not argusd) — ignoring.", stale_pid
             )
 
     runtime = CoreRuntime(data_dir, read_only=read_only)
@@ -419,12 +420,13 @@ def daemon_start(
     from .daemon import pidfile
     from .daemon.process import spawn_daemon, wait_for_pidfile
 
-    existing = pidfile.read(data_dir)
-    if existing is not None and pidfile.is_running(existing):
+    existing = pidfile.running_pid(data_dir)
+    if existing is not None:
         typer.echo(f"daemon already running, PID {existing}")
         raise typer.Exit(code=0)
-    if existing is not None:
-        typer.echo(f"Clearing stale PID file (process {existing} gone).")
+    stale = pidfile.read(data_dir)
+    if stale is not None:
+        typer.echo(f"Clearing stale PID file (PID {stale} is not argusd).")
         pidfile.remove(data_dir)
 
     spawn_daemon(data_dir)
@@ -443,10 +445,21 @@ def daemon_stop(
     data_dir: Path = typer.Option(_default_data_dir(), "--data-dir"),
 ) -> None:
     """Stop argusd gracefully (removes the PID file)."""
+    from .daemon import pidfile
     from .daemon.process import stop_daemon
 
     if stop_daemon(data_dir):
         typer.echo("argusd stopped.")
+    elif pidfile.check(pidfile.read_record(data_dir)) == pidfile.UNVERIFIED:
+        # stop_daemon declined to signal a PID it can't identify; don't claim
+        # nothing is running.
+        typer.echo(
+            f"argusd not stopped: PID {pidfile.read(data_dir)} is alive but can't be "
+            f"verified as argusd, so it was left alone. If it is an older argusd, stop "
+            f"that process yourself; if it isn't argusd, delete {pidfile.path(data_dir)}.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
     else:
         typer.echo("argusd is not running.")
 
@@ -477,10 +490,11 @@ def daemon_status(
     from .daemon import pidfile
     from .daemon.logging import log_path
 
-    pid = pidfile.read(data_dir)
-    if pid is None or not pidfile.is_running(pid):
-        if pid is not None:
-            typer.echo(f"argusd: not running (stale PID file for {pid}).")
+    pid = pidfile.running_pid(data_dir)
+    if pid is None:
+        stale = pidfile.read(data_dir)
+        if stale is not None:
+            typer.echo(f"argusd: not running (stale PID file for {stale}).")
         else:
             typer.echo("argusd: not running.")
         raise typer.Exit(code=0)
@@ -494,6 +508,12 @@ def daemon_status(
     except OSError:
         uptime = "unknown"
 
+    if pidfile.live_pid(data_dir) is None:
+        typer.echo(
+            f"argusd: possibly running (PID {pid} is alive but can't be verified "
+            f"as argusd). If it isn't, delete {pidfile.path(data_dir)}."
+        )
+        raise typer.Exit(code=0)
     typer.echo(f"argusd: running (PID {pid}, uptime {uptime}).")
     typer.echo(f"Log: {log_path(data_dir)}")
 

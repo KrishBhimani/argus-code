@@ -39,8 +39,8 @@ def run_foreground(
     stop_event = stop_event or threading.Event()
     me = os.getpid()
 
-    existing = pidfile.read(data_dir)
-    if existing is not None and existing != me and pidfile.is_running(existing):
+    existing = pidfile.running_pid(data_dir)
+    if existing is not None and existing != me:
         raise DaemonAlreadyRunning(existing)
 
     if install_signals:

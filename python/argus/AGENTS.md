@@ -23,6 +23,22 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   A new background thread that writes to the connection must get the same
   stop-event + name-based join and be added here and to the `db` test fixture.
 - `daemon/` — `argusd` background service: pidfile, process lifecycle, logging.
+  **Never act on a bare PID.** The pidfile stores `{"pid", "start"}` (process
+  start time: `/proc/<pid>/stat` field 22 / `ps -o lstart=` / Windows
+  `GetProcessTimes`); every "is argusd running?" decision (stop, collision guard,
+  `argus start` read-only mode, `daemon status`) goes through
+  `pidfile.check()`: VERIFIED (same start time, or with no start time to
+  compare, a command line that is `argus … daemon run`), STALE (dead, different
+  start time, visibly another program) or UNVERIFIED (alive, identity
+  unreadable — e.g. an old bare-PID file on Windows). **Only VERIFIED is ever
+  signalled** (`live_pid`), and `stop_daemon` re-verifies before its
+  after-timeout force-kill (the PID may have been reused while it waited).
+  `argus daemon stop` on an UNVERIFIED PID says so and exits 1; it never
+  reports "not running" for a process it declined to check.
+  "Don't start a second writer" decisions (collision
+  guard, `daemon start`, `argus start` read-only mode) use `running_pid`, which
+  also counts UNVERIFIED and tells the user how to clear it. The Windows branch
+  is unit-tested with a fake `kernel32`, not exercised on Windows in CI.
 - `detectors/` — alert detectors (registry + individual rules like tool-error-rate spike).
 - `pricing/` — pricing table load / refresh / compute; bundled JSON under repo `pricing/`.
 - `scaffold/` — `argus claude` scaffolding (templates, snapshot, storage).
