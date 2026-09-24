@@ -28,6 +28,16 @@ after a schema/feature upgrade.
   `_header_for_recompute(..., authoritative=from_offset == 0)` keeps the stored
   `project_path`/`started_at` on later ticks; `build_session` widens
   start/end with every stored turn.
+- **Fork copies are counted once, by their origin** (`_drop_fork_copies` /
+  `_reclaim_fork_copies` in `pipeline.py`). A turn tagged
+  `metadata.origin_session_id` is dropped (with its tool calls) when that origin
+  session already stores the same message; if the fork was read first, the origin
+  reclaims the tagged copies when it's ingested and the fork is recomputed
+  (`recompute_stored_session`, which rewrites `started_at`). Top-level sessions
+  only. Search segments of copied lines are not de-duplicated.
+  `repair_fork_duplicates_v1` (`_repair_fork_duplicates_once`, background phase)
+  parses — doesn't ingest — each session sharing a message id with another and
+  deletes only verified copies; sessions whose file is gone are left alone.
 - **Sub-agents are walked via the parent.** A parent ingest discovers
   `adapter.sub_session_files_for(parent)` and ingests any that **grew past their
   offset**. Sub-agent session ids contain `/` (`<parent>/agent-<hex>`).

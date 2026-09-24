@@ -183,3 +183,11 @@ MIGRATION_006 = """
 ALTER TABLE transcript_segments ADD COLUMN tool_use_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_segments_tool_use ON transcript_segments(session_id, tool_use_id);
 """
+
+# Turn ids are f"{session_id}:{message.id}", so the message id is the suffix
+# after the session prefix. Indexed so fork de-duplication (the same message
+# stored under two sessions) is a lookup, not a scan. CREATE INDEX IF NOT
+# EXISTS: idempotent, non-destructive.
+MIGRATION_007 = """
+CREATE INDEX IF NOT EXISTS idx_turns_message ON turns(substr(id, length(session_id) + 2));
+"""

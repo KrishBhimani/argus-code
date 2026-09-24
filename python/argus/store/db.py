@@ -16,9 +16,28 @@ from .migrations.inline import (
     MIGRATION_004,
     MIGRATION_005,
     MIGRATION_006,
+    MIGRATION_007,
 )
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
+
+# What each versioned migration must leave behind: a schema object name
+# (table / index / trigger, looked up in sqlite_master) or "table.column".
+# A recorded schema_version can claim more than the schema holds: a crash
+# between DDL and the version bump, or another branch's migration stamping the
+# same number (a real DB reached "7" through an unmerged branch's 007 and never
+# got idx_turns_message). So after the version loop, any migration with a
+# missing artifact is re-run. Safe because every migration is idempotent
+# (IF NOT EXISTS, duplicate-tolerant ADD COLUMN, idempotent UPDATE).
+_MIGRATION_ARTIFACTS: dict[int, tuple[str, ...]] = {
+    2: ("sessions.started_at_ms", "sessions.ended_at_ms", "idx_sessions_time",
+        "tool_calls", "prompts", "prompts_fts", "prompts_ai", "prompts_ad", "prompts_au"),
+    3: ("transcript_segments", "transcript_fts", "segments_ai", "segments_ad", "segments_au"),
+    4: ("alerts", "idx_alerts_unseen", "idx_alerts_recent"),
+    5: ("alerts.resolved_at",),
+    6: ("transcript_segments.tool_use_id", "idx_segments_tool_use"),
+    7: ("idx_turns_message",),
+}
 
 
 class FTS5NotAvailableError(RuntimeError):
@@ -183,10 +202,29 @@ def open_db(path: str | Path, *, read_only: bool = False) -> sqlite3.Connection:
         (4, MIGRATION_004),
         (5, MIGRATION_005),
         (6, MIGRATION_006),
+        (7, MIGRATION_007),
     )
     for version, sql in versioned:
         if current < version:
             _run_migration(conn, version, sql)
             current = version
 
+    # Self-heal: the version says a migration ran but its artifacts disagree.
+    # Re-run it, never stamping the version backwards.
+    for version, sql in versioned:
+        if not _has_artifacts(conn, _MIGRATION_ARTIFACTS[version]):
+            _run_migration(conn, max(current, version), sql)
+
     return conn
+
+
+def _has_artifacts(conn: sqlite3.Connection, artifacts: tuple[str, ...]) -> bool:
+    names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}
+    for artifact in artifacts:
+        table, _, column = artifact.partition(".")
+        if not column:
+            if artifact not in names:
+                return False
+        elif column not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
+            return False
+    return True

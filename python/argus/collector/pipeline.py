@@ -14,7 +14,7 @@ from ..schema.types import (
     Turn,
 )
 from ..store.repository import Repository
-from .aggregate import build_session, build_turn
+from .aggregate import _earliest, build_session, build_turn
 from .rollup_subagents import rollup_subagents
 
 
@@ -167,6 +167,105 @@ def _to_segment(r: RawSegment, session_id: str) -> TranscriptSegment:
     )
 
 
+def _drop_fork_copies(
+    repo: Repository, session_id: str, result: AdapterIngestResult
+) -> AdapterIngestResult:
+    """Remove turns this (forked) file copied from a session already stored.
+
+    A turn is a copy only when its line claims an origin session
+    (``metadata.origin_session_id``, see ``claude_code.extract_turns.copied_from``)
+    AND that origin already stores the same message — the claim alone isn't
+    enough. The copies' tool calls go with them, and the header's start is
+    recomputed from the kept turns so the fork doesn't inherit its parent's.
+    """
+    if "/" in session_id:  # sub-agent files are never forks of another session
+        return result
+    agent = session_id.split(":", 1)[0]
+    claims = {
+        t.native_turn_id: t.metadata["origin_session_id"]
+        for t in result.turns
+        if t.metadata.get("origin_session_id")
+        and f"{agent}:{t.metadata['origin_session_id']}" != session_id
+    }
+    if not claims:
+        return result
+    stored = repo.existing_turn_ids([f"{agent}:{o}:{m}" for m, o in claims.items()])
+    copied = {m for m, o in claims.items() if f"{agent}:{o}:{m}" in stored}
+    if not copied:
+        return result
+    kept = [t for t in result.turns if t.native_turn_id not in copied]
+    header = result.header.model_copy(
+        update={
+            "started_at": _earliest([t.timestamp for t in kept]) or "",
+            "ended_at": result.header.ended_at if kept else None,
+        }
+    )
+    return result.model_copy(
+        update={
+            "header": header,
+            "turns": kept,
+            "tool_calls": [c for c in result.tool_calls if c.native_turn_id not in copied],
+        }
+    )
+
+
+def recompute_stored_session(repo: Repository, session_id: str, pricing_version: str) -> None:
+    """Rebuild a session row from its stored turns and stored sub-sessions.
+
+    For corrections that remove turns (fork de-duplication) without a file
+    re-read. ``started_at`` is rewritten from the remaining turns; ``ended_at``
+    and the per-file fields stay as stored.
+    """
+    existing = repo.get_session(session_id)
+    if existing is None:
+        return
+    turns = repo.get_turns_for_session(session_id)
+    header = RawSessionHeader(
+        native_session_id=session_id.split(":", 1)[-1],
+        agent=existing.agent,
+        agent_version=existing.agent_version,
+        project_path=existing.project_path,
+        # No turns left (a fork that only held copies): nothing of its own
+        # happened, so collapse to its last activity rather than keep a start
+        # inherited from copied lines.
+        started_at="" if turns else (existing.ended_at or existing.started_at),
+        ended_at=existing.ended_at,
+        agent_reported_cost_usd=existing.agent_reported_cost_usd,
+        metadata={k: v for k, v in existing.metadata.items() if k != "sub_agent_session_ids"},
+    )
+    session = build_session(header, session_id, turns, pricing_version)
+    subs = repo.get_sub_sessions(session_id)
+    if subs:
+        session = rollup_subagents(session, subs)
+    repo.upsert_session(session, rewrite_started_at=True)
+
+
+def _reclaim_fork_copies(
+    repo: Repository, session_id: str, result: AdapterIngestResult, table: PricingTable
+) -> None:
+    """Take back this session's messages from forks ingested before it.
+
+    Order-independence for ``_drop_fork_copies``: if the fork's file was read
+    first, its copies were stored (tagged with this session as their origin).
+    Now that the origin holds them, delete the fork's copies and recompute it.
+    """
+    if "/" in session_id:
+        return
+    own = [t.native_turn_id for t in result.turns if not t.metadata.get("origin_session_id")]
+    if not own:
+        return
+    by_fork: dict[str, list[Turn]] = {}
+    for t in repo.fork_copies_of(session_id, own):
+        by_fork.setdefault(t.session_id, []).append(t)
+    for fork_id, copies in by_fork.items():
+        # Tagged copies are only written by this code, where a call's
+        # turn_index is its turn's file-wide sequence — so the fork's copied
+        # calls are found by sequence, including calls of a message whose
+        # tool_use lines the origin read in an earlier tick than this one.
+        repo.delete_fork_copy_turns(fork_id, copies)
+        recompute_stored_session(repo, fork_id, table.version)
+
+
 def ingest_file(
     adapter: Adapter, file_path: Path, repo: Repository, table: PricingTable
 ) -> None:
@@ -186,6 +285,7 @@ def ingest_file(
         )
 
     session_id = f"{result.header.agent}:{result.header.native_session_id}"
+    result = _drop_fork_copies(repo, session_id, result)
     existing = repo.get_session(session_id)
 
     # No new parent turns AND no session yet:
@@ -204,6 +304,7 @@ def ingest_file(
         repo.upsert_session(build_session(result.header, session_id, [], table.version))
 
     _apply_result(repo, session_id, result, from_offset, table)
+    _reclaim_fork_copies(repo, session_id, result, table)
 
     # Sub-agents: each sub-agent JSONL becomes its own session under
     # <sessionId>/<filename>. We reconcile them even on a tick with no new
