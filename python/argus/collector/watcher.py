@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -122,13 +123,21 @@ class WatcherHandle:
         self._queue = ingest_queue
         self._worker = worker
 
-    def stop(self) -> None:
+    def stop(self, timeout: float = 10.0) -> bool:
+        """Stop observers and the ingest worker; True once all have exited.
+
+        The worker ingests through the shared DB connection, so callers must
+        not close the connection while this returns False. Bounded so a wedged
+        ingest can't hang shutdown forever.
+        """
+        deadline = time.monotonic() + timeout
         for o in self._observers:
             o.stop()
         for o in self._observers:
-            o.join()
+            o.join(max(0.0, deadline - time.monotonic()))
         self._queue.put(_STOP)
-        self._worker.join()
+        self._worker.join(max(0.0, deadline - time.monotonic()))
+        return not self._worker.is_alive() and not any(o.is_alive() for o in self._observers)
 
 
 def start_watcher(

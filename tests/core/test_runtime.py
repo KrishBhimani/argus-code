@@ -99,13 +99,14 @@ def test_stop_order_scheduler_then_watcher_then_db(tmp_path, patched_adapters):
     orig_sched_stop = sched.stop
     orig_watch_stop = watch.stop
 
-    def sched_stop():
+    # stop() takes a timeout and reports whether its thread exited; forward both.
+    def sched_stop(*a, **k):
         calls.append("scheduler")
-        orig_sched_stop()
+        return orig_sched_stop(*a, **k)
 
-    def watch_stop():
+    def watch_stop(*a, **k):
         calls.append("watcher")
-        orig_watch_stop()
+        return orig_watch_stop(*a, **k)
 
     # sqlite3.Connection.close is a read-only C attribute; wrap it in a proxy
     # that records the call and delegates to the real connection.
