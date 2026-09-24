@@ -21,13 +21,3 @@ export function dayKeys(end: Date, n: number): string[] {
 
 export const sliceWindow = (byDay: Record<string, number>, keys: string[]): number =>
   keys.reduce((a, k) => a + (byDay[k] ?? 0), 0);
-
-// candidate-endpoint: a server-side `prior_window` field on /api/overview would
-// remove the need to fetch the wider window and slice days client-side.
-export function priorWindowTotal(byDay: Record<string, number>, w: Window, today: Date): number | null {
-  const n = windowDays(w);
-  if (n == null) return null;
-  const end = new Date(today);
-  end.setDate(end.getDate() - n);
-  return sliceWindow(byDay, dayKeys(end, n));
-}

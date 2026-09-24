@@ -1,4 +1,4 @@
-import { byProject, perMTokens, topNPlusOther, inWindow, sessionTokens, priorWindowSessions } from './rollups';
+import { byProject, perMTokens, topNPlusOther, inWindow, sessionTokens } from './rollups';
 import { mk } from './testutil';
 
 it('byProject aggregates and sorts by tokens', () => {
@@ -34,10 +34,3 @@ it('inWindow keeps sessions started within the window', () => {
 
 it('sessionTokens sums four fields', () =>
   expect(sessionTokens(mk({ total_fresh_input_tokens: 1, total_output_tokens: 2, total_cache_read_tokens: 3, total_cache_write_tokens: 4 }))).toBe(10));
-
-it('priorWindowSessions takes the equal window before the current one', () => {
-  const today = new Date('2026-08-21T12:00:00');
-  const s = [mk({ id: 'cur', started_at: '2026-08-20T01:00:00' }), mk({ id: 'prev', started_at: '2026-08-12T01:00:00' }), mk({ id: 'old', started_at: '2026-08-01T01:00:00' })];
-  expect(priorWindowSessions(s, '7d', today)!.map((x) => x.id)).toEqual(['prev']);
-  expect(priorWindowSessions(s, 'all', today)).toBeNull();
-});

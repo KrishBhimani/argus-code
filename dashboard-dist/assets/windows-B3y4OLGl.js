@@ -1,0 +1,1 @@
+const s=t=>({"24h":1,"7d":7,"30d":30,all:null})[t],d=t=>({"24h":"7d","7d":"30d","30d":"all",all:"all"})[t],l=t=>`${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}-${String(t.getDate()).padStart(2,"0")}`;function r(t,o){const n=[];for(let a=o-1;a>=0;a--){const e=new Date(t);e.setDate(e.getDate()-a),n.push(l(e))}return n}export{d as a,r as d,s as w};
