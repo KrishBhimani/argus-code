@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from ...schema.types import RawSessionHeader
 from ..base import AdapterIngestResult, ParseError
-from .extract_tool_calls import extract_tool_calls
+from .extract_tool_calls import errored_tool_use_ids, extract_tool_calls
 from .extract_transcript import extract_transcript_segments
 from .extract_turns import extract_turns
 from .schemas import AssistantLine, UserLine
@@ -61,7 +61,13 @@ def ingest_claude_code_file(
     new_offset = from_offset + consumed_bytes
 
     assistant_lines: list[AssistantLine] = []
+    # Byte offset of each assistant line: a turn's file-wide sequence.
+    assistant_offsets: list[int] = []
     user_lines: list[UserLine] = []
+    # cwd of the first parsed line (user or assistant) in this read. Only a
+    # read from offset 0 describes the session's project; the collector keeps
+    # the stored project on later ticks (the user may ``cd`` mid-session).
+    first_cwd: str | None = None
     parse_errors: list[ParseError] = []
     line_offset = from_offset
 
@@ -87,12 +93,19 @@ def ingest_claude_code_file(
         otype = obj.get("type") if isinstance(obj, dict) else None
         try:
             if otype == "assistant":
-                assistant_lines.append(AssistantLine.model_validate(obj))
+                a = AssistantLine.model_validate(obj)
+                assistant_lines.append(a)
+                assistant_offsets.append(line_offset)
+                if first_cwd is None:
+                    first_cwd = a.cwd
             elif otype == "user":
                 # User-line schema failure is non-fatal (loose schema) — skip
                 # without recording, otherwise parse_errors would flood.
                 try:
-                    user_lines.append(UserLine.model_validate(obj))
+                    u = UserLine.model_validate(obj)
+                    user_lines.append(u)
+                    if first_cwd is None:
+                        first_cwd = u.cwd
                 except ValidationError:
                     pass
         except ValidationError as e:
@@ -106,16 +119,18 @@ def ingest_claude_code_file(
             )
         line_offset += line_bytes + 1
 
-    turns = extract_turns(assistant_lines)
-    tool_calls = extract_tool_calls(assistant_lines, user_lines)
+    turns = extract_turns(assistant_lines, assistant_offsets)
+    tool_calls = extract_tool_calls(assistant_lines, user_lines, assistant_offsets)
     segments = extract_transcript_segments(assistant_lines, user_lines)
 
     session_id = file_path.stem
-    cwd = assistant_lines[0].cwd if assistant_lines else ""
-    version = assistant_lines[-1].version if assistant_lines else None
-    started_at = (
-        assistant_lines[0].timestamp if assistant_lines else "1970-01-01T00:00:00.000Z"
+    cwd = first_cwd or ""
+    version = next(
+        (a.version for a in reversed(assistant_lines) if a.version), None
     )
+    # Chunk-local bounds. The collector widens them with the stored turns
+    # (``build_session``), so a later tick can't shrink the session's start.
+    started_at = assistant_lines[0].timestamp if assistant_lines else ""
     ended_at = assistant_lines[-1].timestamp if assistant_lines else None
 
     result = AdapterIngestResult(
@@ -131,6 +146,7 @@ def ingest_claude_code_file(
         ),
         turns=turns,
         tool_calls=tool_calls,
+        tool_error_ids=errored_tool_use_ids(user_lines),
         segments=segments,
         parse_errors=parse_errors,
     )

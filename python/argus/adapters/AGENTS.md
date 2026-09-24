@@ -33,6 +33,16 @@ ingests files, `schemas.py` validates each line (`AssistantLine`, `UserLine`, �
   group, while `input`/`cache_*` (fixed before generation, identical on every
   line) come from the first. Taking the first line for output under-counted by
   ~13% on real transcripts — don't regress to `group[0]` for output.
+- **Per-tick values must not pretend to describe the file.** The watcher feeds
+  a live transcript in many small ticks, so `ingest_file` sees a slice. Turn
+  `sequence` (and each call's `turn_index`) is the **byte offset of the
+  message's first line** — file-wide monotonic, identical however the file was
+  chunked; the dashboard renumbers turns 1..n for display. The header's
+  `project_path` is the first parsed line's `cwd` and `started_at` the slice's
+  first assistant line: only a read from offset 0 makes them the session's
+  values (the collector keeps the stored ones otherwise). Tool errors are
+  returned twice: on calls in the same slice, and as `tool_error_ids` for the
+  collector to apply by id to calls stored by an earlier tick.
 - **Known data limitation — do not design against it:** sub-agent ids are exactly
   one level deep, and there is no stored workflow grouping or spawn-turn link.
   Don't build features that assume a nested sub-agent tree or a spawn→child edge;

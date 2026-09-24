@@ -159,6 +159,21 @@ log directory:
 - sums each sub-agent session's token + cost totals into the parent
 - captures sub-agent ids in `metadata.sub_agent_session_ids` for traceability
 
+#### `test_incremental_invariant.py` — chunked ingest == one-pass ingest (Python)
+
+- **Regression (H1).** Ingest one fixture whole, line by line, and in 7/64/333
+  byte chunks: session row, turns and tool_calls must be identical. Covers
+  session start/duration/project, file-wide turn order, a streamed message
+  split across ticks, and a tool error whose result lands in a later tick
+  (parent and sub-agent).
+- an offset-0 re-read rewrites pre-fix rows instead of merging into them
+
+#### `test_incremental_repairs.py` — one-shot repairs for pre-fix rows (Python)
+
+- `repair_session_duration_v1` recomputes duration/`*_at_ms` in-DB, idempotent
+- `backfill_tool_errors_v1` re-reads every session on disk once; its flag only
+  flips after the capped sweep has really finished
+
 #### `pipeline.test.ts` — end-to-end ingest pipeline (4 tests)
 
 - **Regression: turn merging.** Incremental re-ingest must NOT reduce
