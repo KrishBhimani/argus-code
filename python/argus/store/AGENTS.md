@@ -13,7 +13,15 @@ migrations; `repository.py` is the typed read/write API over SQLite.
 - **Never destroy user data.** Migrations are forward-only and must be
   **non-destructive, idempotent, and re-runnable**. No `DROP`/`DELETE`/`TRUNCATE`
   of user rows to "fix" a schema. Add a new migration by appending `(N, MIGRATION_00N)`
-  to the versioned list with the next number.
+  to the versioned list with the next number **and** listing what it creates in
+  `_MIGRATION_ARTIFACTS` (`db.py`; `open_db` raises `KeyError` without an entry).
+- **`schema_version` is a claim; artifacts are checked.** After the version loop,
+  `open_db` re-runs any migration whose listed artifacts (tables, indexes,
+  triggers, `table.column`) are missing, never stamping the version backwards.
+  This heals a crash between DDL and the version bump, and a DB where another
+  branch's migration stamped the same number (a real DB reached "7" through an
+  unmerged branch and never got `idx_turns_message`). It relies on every
+  migration being idempotent, so keep them that way.
 - **The one sanctioned delete of ingested rows is fork de-duplication**
   (`delete_duplicated_turns`, `delete_fork_copy_turns`): turns/tool calls that a forked session stored as
   copies of *another stored session's* messages. It removes derived duplicates
