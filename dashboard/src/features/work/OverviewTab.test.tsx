@@ -4,7 +4,7 @@ import OverviewTab from './OverviewTab';
 const story = (title: string, branch: string, skills: string[] = [], total = 4) => ({
   title, branch, prs: [212], sessions: 2, session_ids: [title], active_ms: 7_200_000, cost: 64, first_ts: '2026-09-16T10:00:00Z', last_ts: '2026-09-16T12:00:00Z',
   commits: total ? { total, exact: 3, coauthored: 0, inferred: 1 } : { total: 0, exact: 0, coauthored: 0, inferred: 0 },
-  added: 96, deleted: 41, files: 5, skills, output_tokens: 290_757,
+  added: 96, deleted: 41, files: 5, skills, output_tokens: 290_757, whole: null as null | { first_ts: string; last_ts: string; output_tokens: number; cost: number },
 });
 const base = {
   tiles: { active_ms: 147_600_000, cost: 1240, commits: 86, cost_per_commit: 14.4 }, prior: { active_ms: 1, cost: 1050, commits: 60, cost_per_commit: 17.5 },
@@ -18,7 +18,10 @@ vi.mock('./api', () => ({
   useWorkOverview: (_r: number, range: { from?: string }) =>
     loading.on && range.from ? { data: undefined, isFetching: true, isLoading: true, error: null } : { data: base, isFetching: false, isLoading: false, error: null },
 }));
-vi.mock('@tanstack/react-router', () => ({ useNavigate: () => vi.fn(), Link: (p: { children: React.ReactNode }) => <a>{p.children}</a> }));
+vi.mock('@tanstack/react-router', () => ({
+  useNavigate: () => vi.fn(),
+  Link: (p: { children: React.ReactNode; search?: unknown }) => <a data-search={JSON.stringify(p.search)}>{p.children}</a>,
+}));
 
 it('shows tiles, both day charts, stories and the rail', () => {
   render(<OverviewTab repo={1} />);
@@ -92,4 +95,20 @@ it('switches the top chart between output tokens (default), cost and working tim
 it('shows the output tokens of each story', () => {
   render(<OverviewTab repo={1} />);
   expect(screen.getAllByText(/290\.8k tokens/).length).toBeGreaterThan(0);
+});
+
+it('says when a story is a slice of a longer session, with the whole totals', () => {
+  const s0 = base.stories[0];
+  base.stories[0] = { ...s0, whole: { first_ts: '2026-09-03T15:24:45Z', last_ts: '2026-09-17T23:32:06Z', output_tokens: 947_908, cost: 430.67 } };
+  render(<OverviewTab repo={1} />);
+  expect(screen.getByText(/in this range/)).toBeInTheDocument();
+  expect(screen.getByText(/part of a longer session/)).toHaveTextContent('947.9k tokens');
+  expect(screen.getByText(/part of a longer session/)).toHaveTextContent('$431');
+  base.stories[0] = s0;
+});
+
+it('Open in Timeline points at the story sessions', () => {
+  render(<OverviewTab repo={1} />);
+  const link = screen.getAllByText('Open in Timeline →')[0];
+  expect(JSON.parse(link.getAttribute('data-search')!)).toEqual({ tab: 'timeline', focus: 'Fix blocking calls' });
 });

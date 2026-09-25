@@ -177,3 +177,45 @@ def test_daily_series_carry_output_tokens_and_cost_and_stories_carry_tokens(tmp_
     assert d["days"] == ["2026-09-09", "2026-09-10", "2026-09-11", "2026-09-12"]
     assert d["output_tokens"] == [0, 200, 0, 0] and d["cost"] == [0, 2.0, 0, 0]
     assert o["stories"][0]["output_tokens"] == 200
+
+
+def test_a_story_cut_by_the_range_carries_its_whole_session_totals(tmp_path):
+    conn = _world(tmp_path)
+    r = Repository(open_db(tmp_path / "argus.db"))
+    r.upsert_turn(turn_factory("claude_code:A:m2", "claude_code:A", "2026-09-14T10:00:00Z", cost=5.0, output=1000))
+    # ingest moves a session's end with its last turn
+    r.upsert_session(session_factory("claude_code:A", "2026-09-10T10:00:00Z").model_copy(update={"ended_at": "2026-09-14T10:00:00Z"}))
+    r.db.close()
+    o = queries.overview(conn, 1, "2026-09-09T00:00:00Z", "2026-09-12T00:00:00Z")    # A: m1 inside, m2 after
+    a = next(s for s in o["stories"] if s["title"] == "Build A")
+    assert (a["output_tokens"], a["cost"]) == (200, 2.0)
+    assert a["whole"] == {"first_ts": "2026-09-10T10:00:00Z", "last_ts": "2026-09-14T10:00:00Z", "output_tokens": 1200, "cost": 7.0}
+    whole = queries.overview(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z")
+    assert all(s["whole"] is None for s in whole["stories"])
+
+
+def test_a_turn_over_an_hour_counts_its_gap_estimate_not_its_wall_clock(tmp_path):
+    """Claude Code's turn_duration includes waiting (e.g. on a permission prompt overnight)."""
+    conn = _world(tmp_path)
+    conn.execute("DELETE FROM active_spans WHERE session_id = 'claude_code:B'")
+    conn.executemany("INSERT INTO active_spans VALUES ('claude_code:B', ?, ?, ?)", [
+        ("2026-09-21T22:00:00Z", 27 * 3_600_000, "measured"),      # started 2026-09-20T19:00Z
+        ("2026-09-20T19:05:00Z", 300_000, "estimated"),            # inside that turn: 5 + 4 min of real work
+        ("2026-09-21T21:58:00Z", 240_000, "estimated"),
+        ("2026-09-20T12:00:00Z", 300_000, "estimated"),            # before the turn: not part of it
+        ("2026-09-22T10:00:00Z", 600_000, "measured"),             # a normal turn stays as measured
+    ])
+    o = queries.overview(conn, 1, "2026-09-15T00:00:00Z", "2026-09-25T00:00:00Z")
+    fix_b = next(s for s in o["stories"] if s["title"] == "Fix B")
+    assert fix_b["active_ms"] == 300_000 + 240_000 + 600_000 and fix_b["active_estimated"] is True
+
+
+def test_prs_from_another_repo_are_not_tagged_on_this_project(tmp_path):
+    conn = _world(tmp_path)
+    conn.execute("UPDATE repos SET project_key = 'remote:github.com/me/proj' WHERE id = 1")
+    conn.executemany("INSERT INTO session_prs VALUES ('claude_code:A', ?, ?, ?, NULL)", [
+        ("https://github.com/Me/Proj/pull/7", 7, "Me/Proj"),
+        ("https://github.com/other/thing/pull/35", 35, "other/thing"),
+    ])
+    o = queries.overview(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z")
+    assert next(s for s in o["stories"] if s["title"] == "Build A")["prs"] == [7]

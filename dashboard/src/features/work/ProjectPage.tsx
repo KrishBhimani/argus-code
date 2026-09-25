@@ -32,7 +32,7 @@ function Folders({ project }: { project: WorkProject }) {
 
 export default function ProjectPage() {
   const { repo } = useParams({ from: '/projects/$repo' });
-  const { tab } = useSearch({ from: '/projects/$repo' });
+  const { tab, focus } = useSearch({ from: '/projects/$repo' });
   const id = Number(repo);
   const [days, setDays] = useState(30);
   const project = useWorkProjects().data?.projects.find((p) => p.folder_ids.includes(id));
@@ -49,7 +49,7 @@ export default function ProjectPage() {
           {(tab === 'overview' || tab === 'timeline') && <div className="ml-auto pb-2"><PeriodChips days={days} onChange={setDays} /></div>}
         </nav>
         {tab === 'overview' && <OverviewTab key={days} repo={id} days={days} />}
-        {tab === 'timeline' && <TimelineTab repo={id} days={days} />}
+        {tab === 'timeline' && <TimelineTab repo={id} days={days} focus={focus} />}
         {(tab === 'resume' || tab === 'report') && (
           <EmptyState title={tab === 'resume' ? 'Resume is coming in a later piece' : 'Reports are coming in a later piece'}
             hint="The work trial currently covers Overview and Timeline." />

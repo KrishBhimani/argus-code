@@ -62,6 +62,7 @@ def _sessions(conn: sqlite3.Connection, rids: list[int]) -> list[str]:
         f"SELECT session_id FROM session_repo WHERE repo_id IN ({_in(rids)}) ORDER BY session_id", rids)]
 
 
+LONG_TURN_MS = 3_600_000
 _KIND_RANK = "CASE kind WHEN 'measured' THEN 0 WHEN 'estimated' THEN 1 ELSE 2 END"
 
 
@@ -70,13 +71,26 @@ def _active_rows(conn, ids: list[str], frm: str, to: str) -> list[sqlite3.Row]:
     else estimated from transcript gaps, else estimated from the archive's turn times."""
     if not ids:
         return []
-    return conn.execute(
+    rows = conn.execute(
         f"""WITH best AS (
               SELECT session_id, MIN({_KIND_RANK}) AS r FROM active_spans
               WHERE session_id IN ({_in(ids)}) GROUP BY session_id)
             SELECT a.session_id, a.ts, a.ms, a.kind FROM active_spans a JOIN best b ON b.session_id = a.session_id
             WHERE a.ts >= ? AND a.ts < ? AND {_KIND_RANK.replace('kind', 'a.kind')} = b.r""",
         [*ids, frm, to]).fetchall()
+    # Claude Code's turn_duration is wall clock, waiting included: a turn left on a permission
+    # prompt overnight reads as a day of work. Past an hour, count the gap estimate inside it.
+    out: list[sqlite3.Row] = []
+    for r in rows:
+        if r["kind"] == "measured" and r["ms"] > LONG_TURN_MS:
+            began = _iso(_dt(r["ts"]) - timedelta(milliseconds=r["ms"]))
+            out.extend(conn.execute(
+                """SELECT session_id, ts, ms, kind FROM active_spans
+                   WHERE session_id = ? AND kind = 'estimated' AND ts > ? AND ts <= ? AND ts >= ? AND ts < ?""",
+                (r["session_id"], began, r["ts"], frm, to)).fetchall())
+        else:
+            out.append(r)
+    return out
 
 
 def _estimated(kind: str) -> bool:
@@ -167,7 +181,30 @@ def projects(conn: sqlite3.Connection, now_iso: str, tz: int = 0) -> list[dict]:
     return sorted(out, key=lambda p: p["last_worked_at"] or "", reverse=True)
 
 
+def _repo_slug(conn, rids: list[int]) -> str | None:
+    """owner/repo of the project's remote, to keep PRs a session opened in other repos off it."""
+    row = conn.execute("SELECT project_key FROM repos WHERE id = ?", (rids[0],)).fetchone()
+    key = row["project_key"] if row else None
+    return key.split("/", 1)[1] if key and key.startswith("remote:") and "/" in key else None
+
+
+def _whole(conn, sid: str, frm: str, to: str) -> dict | None:
+    """The whole session's totals when the range shows only part of it, else None."""
+    s = conn.execute("SELECT started_at, ended_at FROM core.sessions WHERE id = ?", (sid,)).fetchone()
+    if s and s["started_at"] and s["ended_at"] and s["started_at"] >= frm and s["ended_at"] < to:
+        return None
+    # the session and its sub-agents (ids 'sid/...'), as a range scan the index can serve
+    w = conn.execute(
+        """SELECT MIN(timestamp) AS a, MAX(timestamp) AS b, SUM(output_tokens) AS o, SUM(cost_usd) AS c
+           FROM core.turns WHERE session_id = ? OR (session_id > ? AND session_id < ?)""",
+        (sid, sid + "/", sid + "0")).fetchone()
+    if w["a"] is None or (w["a"] >= frm and w["b"] < to):
+        return None
+    return {"first_ts": w["a"], "last_ts": w["b"], "output_tokens": w["o"] or 0, "cost": w["c"] or 0.0}
+
+
 def _summaries(conn, rids, ids, frm, to, scope) -> list[SessionSummary]:
+    slug = _repo_slug(conn, rids)
     turns = _turn_rows(conn, ids, frm, to)
     by_sid: dict[str, list[sqlite3.Row]] = {}
     for t in turns:
@@ -191,12 +228,14 @@ def _summaries(conn, rids, ids, frm, to, scope) -> list[SessionSummary]:
             f"""SELECT DISTINCT ta.skill FROM turn_attribution ta JOIN core.turns t ON t.id = ta.turn_id
                 WHERE ta.skill IS NOT NULL AND {_ROOT} = ? AND t.timestamp >= ? AND t.timestamp < ?""",
             (sid, frm, to))]
-        prs = [r["pr_number"] for r in conn.execute("SELECT pr_number FROM session_prs WHERE session_id = ? AND pr_number IS NOT NULL", (sid,))]
+        prs = [r["pr_number"] for r in conn.execute(
+            """SELECT pr_number FROM session_prs WHERE session_id = ? AND pr_number IS NOT NULL
+               AND (? IS NULL OR pr_repository IS NULL OR lower(pr_repository) = ?)""", (sid, slug, slug))]
         stamps = sorted(t["timestamp"] for t in ts)
         out.append(SessionSummary(sid, facts["title"] if facts else None, branch, stamps[0], stamps[-1],
                                   active.get(sid, 0), sum(t["cost_usd"] for t in ts), len(ts), skills, prs,
                                   commits_by_sid.get(sid, []), sid in estimated,
-                                  sum(t["output_tokens"] or 0 for t in ts)))
+                                  sum(t["output_tokens"] or 0 for t in ts), _whole(conn, sid, frm, to)))
     return out
 
 

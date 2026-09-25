@@ -20,10 +20,21 @@ class SessionSummary:
     commits: list[dict] = field(default_factory=list)
     active_estimated: bool = False
     output_tokens: int = 0
+    whole: dict | None = None   # the whole session's totals when the range cuts it
 
 
 def _t(ts: str) -> float:
     return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+
+
+def _whole(group: list[SessionSummary]) -> dict | None:
+    """Totals of the story's sessions end to end, when the range shows only part of one."""
+    if not any(s.whole for s in group):
+        return None
+    parts = [s.whole or {"first_ts": s.first_ts, "last_ts": s.last_ts, "output_tokens": s.output_tokens, "cost": s.cost}
+             for s in group]
+    return {"first_ts": min(p["first_ts"] for p in parts), "last_ts": max(p["last_ts"] for p in parts),
+            "output_tokens": sum(p["output_tokens"] for p in parts), "cost": sum(p["cost"] for p in parts)}
 
 
 def _story(group: list[SessionSummary]) -> dict:
@@ -42,6 +53,7 @@ def _story(group: list[SessionSummary]) -> dict:
         "active_estimated": any(s.active_estimated for s in group),
         "cost": sum(s.cost for s in group),
         "output_tokens": sum(s.output_tokens for s in group),
+        "whole": _whole(group),
         "first_ts": group[0].first_ts,
         "last_ts": max(s.last_ts for s in group),
         "commits": {"total": len(commits), **ev},

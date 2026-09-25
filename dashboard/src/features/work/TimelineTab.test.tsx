@@ -40,3 +40,12 @@ it('asks for the chosen period (0 = all time)', () => {
   render(<TimelineTab repo={1} days={0} />);
   expect(ranges.at(-1)).toEqual({ days: 0 });
 });
+
+it('scrolls to and highlights the focused session', () => {
+  const scroll = vi.fn();
+  Element.prototype.scrollIntoView = scroll;
+  render(<TimelineTab repo={1} focus="claude_code:A" />);
+  const item = screen.getByText('Composio connectors').closest('article')!;
+  expect(item).toHaveAttribute('data-focused', 'true');
+  expect(scroll).toHaveBeenCalled();
+});

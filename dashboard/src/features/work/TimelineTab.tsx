@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import { Chip } from '@/components/ui/Chip';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -26,15 +26,21 @@ function CommitRow({ c, nested }: { c: { sha: string; subject: string; evidence:
   );
 }
 
-export default function TimelineTab({ repo, days = 30 }: { repo: number; days?: number }) {
+export default function TimelineTab({ repo, days = 30, focus }: { repo: number; days?: number; focus?: string }) {
+  const focused = new Set(focus ? focus.split(',') : []);
+  const list = useRef<HTMLDivElement>(null);
   const [kind, setKind] = useState<'all' | 'sessions' | 'commits'>('all');
   const [scope, setScope] = useState<Scope>('mine');
   const [branch, setBranch] = useState<string | undefined>(undefined);
   const q = useWorkTimeline(repo, { days }, { kind, scope, branch });
   const branches = [...new Set((q.data?.days ?? []).flatMap((d) => d.items.flatMap((i) => (i.kind === 'session' && i.branch ? [i.branch] : []))))].sort();
+  // Arriving from a story's "Open in Timeline": bring its session into view once loaded.
+  useEffect(() => {
+    list.current?.querySelector('[data-focused="true"]')?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+  }, [q.data, focus]);
   if (q.error) return <ErrorPanel error={q.error} />;
   return (
-    <div className="flex flex-col gap-3">
+    <div ref={list} className="flex flex-col gap-3">
       <div className="flex gap-2">
         {(['all', 'sessions', 'commits'] as const).map((k) => (
           <Chip key={k} active={kind === k} onClick={() => setKind(k)}>{k === 'all' ? 'All' : k === 'sessions' ? 'Sessions' : 'Commits'}</Chip>
@@ -52,7 +58,8 @@ export default function TimelineTab({ repo, days = 30 }: { repo: number; days?: 
           <div className="text-[10px] tracking-[0.08em] text-ink-2 mb-1">{new Date(`${d.day}T12:00:00`).toDateString().toUpperCase()}</div>
           <div className="border-l border-line-2 ml-1.5 pl-4 flex flex-col gap-2">
             {d.items.map((it) => it.kind === 'session' ? (
-              <article key={it.session_id} className="relative">
+              <article key={it.session_id} data-session-id={it.session_id} data-focused={focused.has(it.session_id)}
+                className={`relative ${focused.has(it.session_id) ? 'rounded-md bg-accent/10 ring-1 ring-accent/60 -mx-2 px-2 py-1' : ''}`}>
                 <span className="absolute -left-[21px] top-1.5 w-2.5 h-2.5 rounded-full bg-s1" />
                 <div className="flex items-center gap-2">
                   <b className="text-[13px]">{it.title ?? 'Untitled session'}</b>

@@ -33,6 +33,8 @@ function ChartLabel({ name, peak }: { name: string; peak: string }) {
   );
 }
 
+const day = (iso: string) => new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
+
 function StoryCard({ s, repo }: { s: StoryT; repo: number }) {
   const ev = [s.commits.exact && `${s.commits.exact} exact`, s.commits.coauthored && `${s.commits.coauthored} co-authored`, s.commits.inferred && `${s.commits.inferred} inferred`].filter(Boolean).join(' · ');
   return (
@@ -42,13 +44,20 @@ function StoryCard({ s, repo }: { s: StoryT; repo: number }) {
         {s.branch && <span className="font-mono text-[10px] px-1.5 rounded-full border border-line-2 text-ink-1">{s.branch}</span>}
         {s.prs.map((p) => <span key={p} className="text-[10px] px-1.5 rounded-full border border-line-2 text-ink-1">PR #{p}</span>)}
       </div>
-      <div className="text-[11px] text-ink-2">{s.sessions} session{s.sessions === 1 ? '' : 's'} · {tok(s.output_tokens)} tokens · {hours(s.active_ms, s.active_estimated)} active · {usd(s.cost)}</div>
+      <div className="text-[11px] text-ink-2">
+        {s.sessions} session{s.sessions === 1 ? '' : 's'} · {s.whole && 'in this range: '}{tok(s.output_tokens)} tokens · {hours(s.active_ms, s.active_estimated)} active · {usd(s.cost)}
+      </div>
+      {s.whole && (
+        <div className="text-[11px] text-ink-2">
+          part of a longer session ({day(s.whole.first_ts)} – {day(s.whole.last_ts)}): {tok(s.whole.output_tokens)} tokens · {usd(s.whole.cost)}
+        </div>
+      )}
       <div className="text-[11px] text-ink-1">
         {s.commits.total === 0 ? 'no commits: research' : <>
           <span>{num(s.commits.total)} commits</span> <span className="text-ink-2">({ev})</span> · +{num(s.added)} / −{num(s.deleted)} · {num(s.files)} files
         </>}
       </div>
-      <Link to="/projects/$repo" params={{ repo: String(repo) }} search={{ tab: 'timeline' }} className="text-[11px]">Open in Timeline →</Link>
+      <Link to="/projects/$repo" params={{ repo: String(repo) }} search={{ tab: 'timeline', focus: s.session_ids.join(',') }} className="text-[11px]">Open in Timeline →</Link>
     </article>
   );
 }

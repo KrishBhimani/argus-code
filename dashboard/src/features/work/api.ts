@@ -19,6 +19,8 @@ export const Story = z.object({
   active_ms: z.number(), active_estimated: z.boolean(), cost: z.number(), first_ts: z.string(), last_ts: z.string(),
   commits: z.object({ total: z.number(), exact: z.number(), coauthored: z.number(), inferred: z.number() }),
   added: z.number(), deleted: z.number(), files: z.number(), skills: z.array(z.string()), output_tokens: z.number(),
+  // Set when the range shows only part of a session: that session's totals end to end.
+  whole: z.object({ first_ts: z.string(), last_ts: z.string(), output_tokens: z.number(), cost: z.number() }).nullable(),
 });
 export const WorkOverview = z.object({
   tiles: Tiles, prior: Tiles,

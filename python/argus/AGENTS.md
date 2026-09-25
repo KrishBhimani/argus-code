@@ -55,6 +55,10 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   sessions whose transcript is gone; same 5-min cap). Such sessions are titled from
   the prompt nearest their start (`title_source = 'prompt'`, placeholders stripped);
   transcript titles always win. Tokens and cost always come from argus.db turns.
+  A measured turn over `LONG_TURN_MS` (1 h) is wall clock with waiting in it, so the
+  transcript gap estimate inside that turn is counted instead. A story cut by the
+  range carries `whole` (the session's end-to-end totals). PR tags are kept only when
+  their repository matches the project's remote.
 - `detectors/` — alert detectors: the registry, the shared helpers in `base.py`,
   and one module per rule (`tool_error_rate_spike`, `cost_spike`, `cache_hit_drop`).
 - `pricing/` — pricing table load / refresh / compute; bundled JSON under repo `pricing/`.
