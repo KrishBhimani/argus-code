@@ -12,7 +12,12 @@ const base = {
   stories: [story('Fix blocking calls', 'fix/blocking', ['superpowers:brainstorming']), story('Docs review', 'development', [], 0)],
   breakdowns: { branches: [{ name: 'fix/blocking', value: 64 }], skills: [{ name: 'superpowers:brainstorming', value: 0.3 }], files: [{ name: 'api/x.py', value: 3 }] },
 };
-vi.mock('./api', () => ({ useWorkOverview: () => ({ data: base, isLoading: false, error: null }) }));
+const loading = { on: false };
+vi.mock('./api', () => ({
+  // The second call is the focused (brushed) query; `loading.on` makes it still in flight.
+  useWorkOverview: (_r: number, range: { from?: string }) =>
+    loading.on && range.from ? { data: undefined, isFetching: true, isLoading: true, error: null } : { data: base, isFetching: false, isLoading: false, error: null },
+}));
 vi.mock('@tanstack/react-router', () => ({ useNavigate: () => vi.fn(), Link: (p: { children: React.ReactNode }) => <a>{p.children}</a> }));
 
 it('shows tiles, both day charts, stories and the rail', () => {
@@ -60,4 +65,14 @@ it('shows no vs-prior deltas for all time (there is no earlier period)', () => {
   };
   expect(tiles(30)).toMatch(/%/);
   expect(tiles(0)).not.toMatch(/%/);
+});
+
+it('while a brushed range loads, it says so instead of "No work in this range"', () => {
+  loading.on = true;
+  render(<OverviewTab repo={1} />);
+  const cols = screen.getAllByTestId('daycol');
+  fireEvent.pointerDown(cols[0]); fireEvent.pointerUp(cols[0]);
+  expect(screen.queryByText('No work in this range')).not.toBeInTheDocument();
+  expect(screen.getByText(/Loading/)).toBeInTheDocument();
+  loading.on = false;
 });

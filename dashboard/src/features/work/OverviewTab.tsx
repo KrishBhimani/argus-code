@@ -54,6 +54,7 @@ export default function OverviewTab({ repo, scope = 'mine', days: period = 30 }:
   const range = useMemo(() => selRange(days, sel, tzOffsetMin()), [days, sel]);
   const focused = useWorkOverview(repo, range, scope);
   const detail = sel ? focused.data : base.data;
+  const loading = sel !== null && !focused.data && !focused.error;
   if (base.error) return <ErrorPanel error={base.error} />;
   if (!base.data) return null;
   const { tiles, prior, daily } = base.data;
@@ -88,7 +89,8 @@ export default function OverviewTab({ repo, scope = 'mine', days: period = 30 }:
               {branch && <Chip active onClick={() => setBranch(null)}>branch: {branch} ✕</Chip>}
               {skill && <Chip active onClick={() => setSkill(null)}>skill: {skill} ✕</Chip>}
             </div>
-            {stories.length ? stories.map((s) => <StoryCard key={s.session_ids.join()} s={s} repo={repo} />) : <EmptyState title="No work in this range" />}
+            {loading ? <div className="text-[12px] text-ink-2 py-6 text-center">Loading {label}…</div>
+              : stories.length ? stories.map((s) => <StoryCard key={s.session_ids.join()} s={s} repo={repo} />) : <EmptyState title="No work in this range" />}
           </section>
         </div>
         <aside className="flex flex-col gap-4">
