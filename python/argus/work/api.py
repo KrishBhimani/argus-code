@@ -38,6 +38,8 @@ def build_work_router(data_dir: Path) -> APIRouter:
     def status() -> dict:
         errors = {row["display_name"]: row["last_error"]
                   for row in conn.execute("SELECT display_name, last_error FROM repos WHERE last_error IS NOT NULL")}
+        if get_meta(conn, "facts_error"):
+            errors["transcripts"] = get_meta(conn, "facts_error")
         return {"enabled": True, "last_scan_at": get_meta(conn, "last_scan_at"),
                 "repos": conn.execute("SELECT COUNT(*) FROM repos").fetchone()[0], "errors": errors}
 

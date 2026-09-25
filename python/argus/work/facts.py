@@ -2,19 +2,34 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
 from datetime import datetime
 from pathlib import Path
 
+from .db import set_meta
+
+logger = logging.getLogger("argus.work")
 GAP_CAP_MS = 300_000
 COMMIT_CMD = re.compile(r"\bgit\b[^|;&\n]*\bcommit\b")
 COMMIT_OUT = re.compile(r"^\[[^\]\n]*? (?:\(root-commit\) )?([0-9a-f]{7,40})\]", re.MULTILINE)
 PR_URL = re.compile(r"https?://[^\s/]+/([^\s/]+/[^\s/]+)/pull/(\d+)")
 
 
-def _ms(ts: str) -> float:
-    return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp() * 1000
+def _ms(ts) -> float | None:
+    """Epoch ms, or None for a value that isn't an ISO timestamp (never raises)."""
+    try:
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp() * 1000
+    except ValueError:
+        return None
+
+
+def _int(v) -> int | None:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
 
 
 def read_new_lines(conn: sqlite3.Connection, path: Path) -> list[dict]:
@@ -71,14 +86,14 @@ def _apply(conn: sqlite3.Connection, sid: str, lines: list[dict], top_level: boo
                 title, source = o["customTitle"], "custom"
             elif t == "ai-title" and o.get("aiTitle") and source != "custom":
                 title, source = o["aiTitle"], "ai"
-            elif t == "system" and o.get("subtype") == "turn_duration" and ts:
+            elif t == "system" and o.get("subtype") == "turn_duration" and _ms(ts) is not None                     and _int(o.get("durationMs")) is not None:
                 conn.execute("INSERT INTO active_spans VALUES (?, ?, ?, 'measured')",
-                             (sid, ts, int(o.get("durationMs") or 0)))
+                             (sid, ts, _int(o.get("durationMs"))))
             elif t == "pr-link" and o.get("prUrl"):
                 conn.execute("INSERT OR IGNORE INTO session_prs VALUES (?, ?, ?, ?, ?)",
                              (sid, o["prUrl"], o.get("prNumber"), o.get("prRepository"), ts))
-            if ts and t in ("user", "assistant", "system"):
-                if last_ts:
+            if ts and t in ("user", "assistant", "system") and _ms(ts) is not None:
+                if last_ts and _ms(last_ts) is not None:
                     gap = _ms(ts) - _ms(last_ts)
                     if gap > 0:
                         conn.execute("INSERT INTO active_spans VALUES (?, ?, ?, 'estimated')",
@@ -124,6 +139,7 @@ def _apply(conn: sqlite3.Connection, sid: str, lines: list[dict], top_level: boo
 
 def collect_facts(conn: sqlite3.Connection, adapter) -> set[str]:
     touched: set[str] = set()
+    conn.execute("DELETE FROM meta WHERE key = 'facts_error'")  # reset per pass
     for f in adapter.discover_session_files():
         if adapter.should_skip(f):
             continue
@@ -137,6 +153,10 @@ def collect_facts(conn: sqlite3.Connection, adapter) -> set[str]:
                     _apply(conn, session_id, lines, top)
                     touched.add(sid)
                 conn.execute("COMMIT")
+            except Exception as e:  # noqa: BLE001  one bad file must not stop the others
+                conn.execute("ROLLBACK")
+                logger.warning("work: skipped facts from %s: %s", path, e)
+                set_meta(conn, "facts_error", f"{path.name}: {e}")
             except BaseException:
                 conn.execute("ROLLBACK")
                 raise

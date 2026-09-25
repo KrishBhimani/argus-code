@@ -113,3 +113,20 @@ def test_invalid_utf8_does_not_drift_offset(tmp_path):
     collect_facts(conn, adapter)
     assert conn.execute("SELECT title FROM session_facts").fetchone()[0] == "after"
     assert conn.execute("SELECT byte_offset FROM file_offsets").fetchone()[0] == f.stat().st_size
+
+
+def test_bad_line_does_not_block_other_files_or_other_facts(tmp_path):
+    """Review I-1: one malformed line (bad timestamp, non-numeric duration) used to
+    raise out of collect_facts, roll back, and stop facts for EVERY file on every pass."""
+    _, adapter = _setup(tmp_path, [
+        L(type="user", timestamp="not-a-date", message={"role": "user", "content": "x"}),
+        L(type="system", subtype="turn_duration", durationMs="lots", timestamp="2026-09-01T10:00:00Z"),
+        L(type="ai-title", aiTitle="still collected"),
+    ])
+    other = tmp_path / ".claude" / "projects" / "C--other" / "22222222-2222-3333-4444-555555555555.jsonl"
+    other.parent.mkdir(parents=True)
+    other.write_text(json.dumps({"type": "ai-title", "aiTitle": "other file"}) + "\n", encoding="utf-8")
+    conn = open_work_db(tmp_path / "data")
+    collect_facts(conn, adapter)
+    titles = {r["title"] for r in conn.execute("SELECT title FROM session_facts")}
+    assert titles == {"still collected", "other file"}
