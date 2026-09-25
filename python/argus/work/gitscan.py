@@ -15,7 +15,6 @@ LOG_FORMAT = (
     "%(trailers:key=Co-authored-by,valueonly,separator=%x1d)"
 )
 AGENT_TRAILER = re.compile(r"claude|noreply@anthropic\.com", re.IGNORECASE)
-RESCAN_OVERLAP_DAYS = 2
 FALLBACK_DAYS = 180
 
 
@@ -43,9 +42,9 @@ class CommitRec:
     files: list[FileStat] = field(default_factory=list)
 
 
-def run_git(args: list[str], cwd: Path | str, timeout: float = 60) -> str:
+def run_git(args: list[str], cwd: Path | str, timeout: float = 60, input: str | None = None) -> str:
     try:
-        p = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True,
+        p = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, input=input,
                            encoding="utf-8", errors="replace", timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as e:  # git missing, bad cwd, timeout
         raise GitError(str(e)) from e
@@ -123,13 +122,33 @@ def _store(conn: sqlite3.Connection, repo_id: int, commits: list[CommitRec]) -> 
         )
 
 
+def _ref_tips(root: str) -> list[str]:
+    """Every ref's commit plus HEAD: what a repo's history is reachable from."""
+    out = run_git(["for-each-ref", "--format=%(objectname)"], root, timeout=15)
+    tips = {line.strip() for line in out.splitlines() if line.strip()}
+    try:
+        tips.add(run_git(["rev-parse", "HEAD"], root, timeout=15).strip())
+    except GitError:  # empty repo, no HEAD yet
+        pass
+    return sorted(t for t in tips if t)
+
+
 def scan_repo(conn: sqlite3.Connection, repo_id: int, root: str, now_iso: str) -> int:
-    row = conn.execute("SELECT last_scanned_at FROM repos WHERE id = ?", (repo_id,)).fetchone()
+    row = conn.execute("SELECT last_scanned_at, ref_tips FROM repos WHERE id = ?", (repo_id,)).fetchone()
     base = ["log", "--all", "--no-color", "--no-renames", "--numstat", f"--format={LOG_FORMAT}"]
     error = None
-    if row["last_scanned_at"]:
-        since = datetime.fromisoformat(row["last_scanned_at"].replace("Z", "+00:00")) - timedelta(days=RESCAN_OVERLAP_DAYS)
-        text = run_git([*base, f"--since={since.isoformat()}"], root)
+    tips = _ref_tips(root)
+    old = json.loads(row["ref_tips"]) if row["ref_tips"] else None
+    if old is not None and set(old) == set(tips):
+        text = ""  # no ref moved: nothing new to read
+    elif old is not None:
+        # Commits reachable from the refs now but not from the refs last time, whatever
+        # their dates (a pull of older work, a fetched branch). Tips go in via stdin so
+        # a repo with many refs can't overflow the command line.
+        try:
+            text = run_git([*base, "--stdin"], root, input="".join(f"^{t}\n" for t in old))
+        except GitError:  # an old tip was garbage-collected (rebase + gc): read it all again
+            text = run_git(base, root)
     else:
         try:
             text = run_git(base, root)
@@ -146,8 +165,8 @@ def scan_repo(conn: sqlite3.Connection, repo_id: int, root: str, now_iso: str) -
     try:
         _store(conn, repo_id, commits)
         conn.execute(
-            "UPDATE repos SET user_emails = ?, last_scanned_at = ?, last_error = ?, present = 1 WHERE id = ?",
-            (json.dumps([e for e in emails if e]), now_iso, error, repo_id),
+            "UPDATE repos SET user_emails = ?, last_scanned_at = ?, last_error = ?, present = 1, ref_tips = ? WHERE id = ?",
+            (json.dumps([e for e in emails if e]), now_iso, error, json.dumps(tips), repo_id),
         )
         conn.execute("COMMIT")
     except BaseException:

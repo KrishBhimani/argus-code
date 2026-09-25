@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS repos (
   user_emails TEXT NOT NULL DEFAULT '[]',
   last_scanned_at TEXT,
   last_error TEXT,
-  present INTEGER NOT NULL DEFAULT 1
+  present INTEGER NOT NULL DEFAULT 1,
+  ref_tips TEXT
 );
 CREATE TABLE IF NOT EXISTS commits (
   repo_id INTEGER NOT NULL, sha TEXT NOT NULL,

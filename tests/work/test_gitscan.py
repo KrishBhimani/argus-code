@@ -95,3 +95,32 @@ def test_first_scan_timeout_falls_back_to_180_days(tmp_path, monkeypatch):
     assert conn.execute("SELECT COUNT(*) FROM commits").fetchone()[0] == 3
     row = conn.execute("SELECT last_error FROM repos WHERE id=?", (rid,)).fetchone()
     assert "180 days" in row["last_error"]
+
+
+def test_rescan_picks_up_late_arriving_old_commits(tmp_path):
+    """Review I-2: incremental scans used --since=<last scan - 2 days> on committer
+    date, so commits that arrive later with an older date (a pull of work done on
+    another machine, a fetched teammate branch) were never read."""
+    repo = make_repo(tmp_path / "proj")
+    conn = open_work_db(tmp_path / "data")
+    root = gitscan.repo_root(str(repo))
+    rid = gitscan.ensure_repo(conn, root)
+    gitscan.scan_repo(conn, rid, root, "2026-09-05T00:00:00Z")
+    (repo / "b.py").write_text("x = 1\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "feat: done last month elsewhere", date="2026-08-01T10:00:00Z")
+    gitscan.scan_repo(conn, rid, root, "2026-09-06T00:00:00Z")
+    subjects = {r["subject"] for r in conn.execute("SELECT subject FROM commits")}
+    assert "feat: done last month elsewhere" in subjects
+
+
+def test_rescan_with_unchanged_refs_skips_git_log(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path / "proj")
+    conn = open_work_db(tmp_path / "data")
+    root = gitscan.repo_root(str(repo))
+    rid = gitscan.ensure_repo(conn, root)
+    gitscan.scan_repo(conn, rid, root, "2026-09-05T00:00:00Z")
+    real, logs = gitscan.run_git, []
+    monkeypatch.setattr(gitscan, "run_git", lambda args, cwd, timeout=60, **kw: (logs.append(args[0]), real(args, cwd, timeout, **kw))[1])
+    assert gitscan.scan_repo(conn, rid, root, "2026-09-06T00:00:00Z") == 0
+    assert "log" not in logs
