@@ -590,6 +590,54 @@ def test_tool_call_stats_in_range_returns_per_tool_counts(repo):
     assert by_name["Read"]["errors"] == 0
 
 
+def test_project_turn_stats_in_range_groups_by_project(repo):
+    repo.upsert_session(session_factory("s1", "2026-05-20T00:00:00Z", project_path="/a"))
+    repo.upsert_session(session_factory("s2", "2026-05-20T00:00:00Z", project_path="/b"))
+    repo.upsert_turn(turn_factory("t1", "s1", "2026-05-21T00:00:00Z", cost=1.0,
+                                  fresh=10, output=5, cache_read=70, cache_write=20))
+    repo.upsert_turn(turn_factory("t2", "s1", "2026-05-21T01:00:00Z", cost=2.0,
+                                  fresh=10, output=5, cache_read=70, cache_write=20))
+    repo.upsert_turn(turn_factory("t3", "s2", "2026-05-21T02:00:00Z", cost=4.0,
+                                  fresh=1, output=1, cache_read=1, cache_write=1))
+    repo.upsert_turn(turn_factory("t4", "s1", "2026-05-15T00:00:00Z", cost=99.0,
+                                  fresh=1, output=1, cache_read=1, cache_write=1))
+    stats = repo.project_turn_stats_in_range(
+        start_iso="2026-05-20T00:00:00Z", end_iso="2026-05-22T00:00:00Z"
+    )
+    by_project = {r["project_path"]: r for r in stats}
+    assert by_project["/a"]["turns"] == 2       # the 05-15 turn is outside the range
+    assert by_project["/a"]["cost"] == 3.0
+    assert by_project["/a"]["fresh_input"] == 20
+    assert by_project["/a"]["output"] == 10
+    assert by_project["/a"]["cache_read"] == 140
+    assert by_project["/a"]["cache_write"] == 40
+    assert by_project["/b"]["turns"] == 1
+    assert by_project["/b"]["cost"] == 4.0
+
+
+def test_project_turn_stats_in_range_collapses_subagents_to_parent(repo):
+    """Sub-agent turns land on the parent session's project, not their own."""
+    repo.upsert_session(session_factory("p", "2026-05-20T00:00:00Z", project_path="/a"))
+    repo.upsert_session(session_factory("p/sub", "2026-05-20T00:00:00Z",
+                                        project_path="/elsewhere"))
+    repo.upsert_turn(turn_factory("t1", "p", "2026-05-21T00:00:00Z", cost=1.0))
+    repo.upsert_turn(turn_factory("t2", "p/sub", "2026-05-21T00:00:00Z", cost=2.0))
+    stats = repo.project_turn_stats_in_range(
+        start_iso="2026-05-20T00:00:00Z", end_iso="2026-05-22T00:00:00Z"
+    )
+    assert [r["project_path"] for r in stats] == ["/a"]
+    assert stats[0]["turns"] == 2
+    assert stats[0]["cost"] == 3.0
+
+
+def test_project_turn_stats_in_range_empty_window(repo):
+    repo.upsert_session(session_factory("s1", "2026-05-20T00:00:00Z", project_path="/a"))
+    repo.upsert_turn(turn_factory("t1", "s1", "2026-05-21T00:00:00Z"))
+    assert repo.project_turn_stats_in_range(
+        start_iso="2026-04-01T00:00:00Z", end_iso="2026-04-08T00:00:00Z"
+    ) == []
+
+
 # ─── Session timeline ─────────────────────────────────────────────────
 
 

@@ -39,7 +39,8 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   guard, `daemon start`, `argus start` read-only mode) use `running_pid`, which
   also counts UNVERIFIED and tells the user how to clear it. The Windows branch
   is unit-tested with a fake `kernel32`, not exercised on Windows in CI.
-- `detectors/` — alert detectors (registry + individual rules like tool-error-rate spike).
+- `detectors/` — alert detectors: the registry, the shared helpers in `base.py`,
+  and one module per rule (`tool_error_rate_spike`, `cost_spike`, `cache_hit_drop`).
 - `pricing/` — pricing table load / refresh / compute; bundled JSON under repo `pricing/`.
   `argus pricing refresh` writes to `<data_dir>/pricing/` (never into the installed
   package — upgrades wipe it and it may be read-only); `load_pricing_table(user_dir=...)`
@@ -81,6 +82,17 @@ Delegated subtrees (see their own AGENTS.md): `store/`, `collector/`, `adapters/
   transition, so callers can log it once. Keep `_FakeRuntime` in
   `tests/daemon/test_service.py` signature-compatible with `CoreRuntime` — it
   asserts the daemon requests the tolerant mode.
+- **Detectors are pure and self-registering.** A detector is a new module under
+  `detectors/` with a `@register` class whose `detect(repo, now_iso)` only *reads*
+  and returns `Finding`s, plus the side-effect import in `detectors/__init__.py`.
+  The scheduler (`collector/scheduler.py`) is the only writer of alerts; it also
+  resolves findings a detector stops returning, so a rule must keep its
+  `dedup_key` stable across runs (tool name, project path) or an alert can never
+  resolve. Thresholds live in module-level constants with the reasoning in the
+  module docstring — the shipped rules all compare a trailing 7-day window
+  against the 28 days before it, via `base.iso_at_offset`, and share the
+  `warning` / `critical` severity split. New detector, new severity bands: say
+  why in the docstring.
 - **Privacy stays intact:** no network calls or telemetry beyond opt-in
   `argus pricing refresh`. Don't add outbound calls.
 

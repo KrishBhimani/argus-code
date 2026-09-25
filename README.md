@@ -56,8 +56,9 @@ turn that blew the budget, the tool that quietly started failing last Tuesday, a
 exactly what a sub-agent was told before it went off the rails.
 
 **It watches for you.** Detectors re-check your data every 10 minutes against
-historical baselines and file alerts — a tool whose error rate doubles gets flagged the
-day it breaks, not when you happen to notice.
+historical baselines and file alerts — a tool whose error rate doubles, a project whose
+weekly spend triples, a prompt cache that quietly stopped hitting — all flagged the day
+it happens, not when you happen to notice.
 
 **It accumulates.** Usage tools like `ccusage` read what's on disk *right now*, and
 Claude Code rotates its own logs (`cleanupPeriodDays`, default 30) — so "right now" is
@@ -104,9 +105,11 @@ share, and **$ per million tokens as you actually experienced it** — so you ca
 ### Tool health
 
 A leaderboard of every tool with its error share, calls per day stacked by tool, MCP
-servers, and sub-agent invocations by type. A detector re-checks error rates every 10
-minutes against a 4-week baseline and files an **alert** when a tool's failures double —
-so you notice the day a tool breaks, not the week after.
+servers, and sub-agent invocations by type. Three detectors re-check the last 7 days
+against a 4-week baseline every 10 minutes and file an **alert** when a tool's failures
+double (`tool_error_rate_spike`), when a project's weekly spend multiplies
+(`cost_spike`), or when its prompt-cache hit rate falls off a cliff
+(`cache_hit_drop`) — so you notice the day something breaks, not the week after.
 
 <img src="https://raw.githubusercontent.com/KrishBhimani/argus-code/main/assets/screenshots/tools.png" alt="Tools — leaderboard with error segments and calls per day">
 

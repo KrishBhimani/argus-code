@@ -19,10 +19,9 @@ express it (division by zero).
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
-from .base import Finding
+from .base import Finding, iso_at_offset
 from .registry import register
 
 if TYPE_CHECKING:
@@ -37,20 +36,13 @@ _CRITICAL_MULTIPLE = 5.0
 _ZERO_BASELINE_MIN_WINDOW_RATE = 0.05  # 5%
 
 
-def _iso_at_offset(now_iso: str, days_ago: float) -> str:
-    base = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
-    if base.tzinfo is None:
-        base = base.replace(tzinfo=timezone.utc)
-    return (base - timedelta(days=days_ago)).isoformat().replace("+00:00", "Z")
-
-
 @register
 class ToolErrorRateSpikeDetector:
     name = "tool_error_rate_spike"
 
     def detect(self, repo: "Repository", now_iso: str) -> list[Finding]:
-        window_start = _iso_at_offset(now_iso, _WINDOW_DAYS)
-        baseline_start = _iso_at_offset(now_iso, _WINDOW_DAYS + _BASELINE_DAYS)
+        window_start = iso_at_offset(now_iso, _WINDOW_DAYS)
+        baseline_start = iso_at_offset(now_iso, _WINDOW_DAYS + _BASELINE_DAYS)
 
         window_rows = repo.tool_call_stats_in_range(
             start_iso=window_start, end_iso=now_iso
