@@ -141,6 +141,7 @@ def start(
             adapters=runtime.adapters,
             pricing_table=runtime.pricing_table,
             daemon=read_only,
+            work_data_dir=data_dir if work else None,
         ),
     )
     display_host = "localhost" if host in ("0.0.0.0", "::") else host
