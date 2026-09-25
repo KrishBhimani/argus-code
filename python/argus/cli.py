@@ -50,6 +50,8 @@ claude_app.add_typer(template_app, name="template")
 app.add_typer(claude_app, name="claude")
 daemon_app = typer.Typer(help="Background ingestion + detector daemon (argusd)")
 app.add_typer(daemon_app, name="daemon")
+work_app = typer.Typer(help="Work-analysis trial: git + session links (writes only ~/.argus/work.db)")
+app.add_typer(work_app, name="work")
 
 
 def _setup_logging(quiet: bool = False, verbose: bool = False) -> None:
@@ -91,6 +93,9 @@ def start(
     data_dir: Path = typer.Option(_default_data_dir(), "--data-dir"),
     quiet: bool = typer.Option(False, "--quiet"),
     verbose: bool = typer.Option(False, "--verbose"),
+    work: bool = typer.Option(
+        False, "--work", help="Also run the work-analysis trial (writes only ~/.argus/work.db)"
+    ),
 ) -> None:
     """Start the watcher, ingester, and dashboard server."""
     _setup_logging(quiet=quiet, verbose=verbose)
@@ -116,6 +121,13 @@ def start(
     except NoAdaptersError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(code=1)
+
+    collector = None
+    if work:
+        from .adapters.claude_code.adapter import ClaudeCodeAdapter
+        from .work.collector import WorkCollector
+
+        collector = WorkCollector(data_dir, ClaudeCodeAdapter()).start()
 
     dash_dir = _dashboard_dir()
     server_app = build_app(
@@ -149,6 +161,8 @@ def start(
     except KeyboardInterrupt:
         pass
     finally:
+        if collector is not None and not collector.stop():
+            logger.warning("work: collector still running at shutdown; it writes only work.db")
         runtime.stop()
         logger.info("Argus stopped.")
 
@@ -542,6 +556,38 @@ def daemon_logs(
             follow_log(p, emit=lambda ln: typer.echo(ln))
         except KeyboardInterrupt:
             pass
+
+
+@work_app.command("scan")
+def work_scan(
+    data_dir: Path = typer.Option(_default_data_dir(), "--data-dir"),
+    claude_root: Path = typer.Option(Path.home() / ".claude", "--claude-root", hidden=True),
+) -> None:
+    """Run one work-analysis pass now."""
+    from .adapters.claude_code.adapter import ClaudeCodeAdapter
+    from .work.collector import run_pass
+
+    r = run_pass(data_dir, ClaudeCodeAdapter(claude_root))
+    typer.echo(
+        f"{r.repos} repo(s), {r.commits} commit(s) read; links: "
+        f"{r.links['exact']} exact, {r.links['coauthored']} co-authored, {r.links['inferred']} inferred"
+    )
+    for where, err in r.errors.items():
+        typer.echo(f"  ! {where}: {err}", err=True)
+
+
+@work_app.command("status")
+def work_status(data_dir: Path = typer.Option(_default_data_dir(), "--data-dir")) -> None:
+    """Show what the work-analysis trial has collected."""
+    from .work.db import get_meta, open_work_db
+
+    conn = open_work_db(data_dir)
+    typer.echo(f"last scan: {get_meta(conn, 'last_scan_at') or 'never'}")
+    for r in conn.execute("SELECT display_name, root, present, last_error FROM repos ORDER BY display_name"):
+        flag = "" if r["present"] else "  (repo gone, archived)"
+        err = f"  ! {r['last_error']}" if r["last_error"] else ""
+        typer.echo(f"  {r['display_name']:<28} {r['root']}{flag}{err}")
+    conn.close()
 
 
 def main() -> None:
