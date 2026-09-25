@@ -29,7 +29,7 @@ from ..collector.search_backfill import (
 from ..collector.scheduler import start_scheduler
 from ..collector.watcher import start_watcher
 from ..detectors.registry import available_detectors
-from ..pricing.load import load_pricing_table
+from ..pricing.load import load_pricing_table, user_pricing_dir
 from ..pricing.types import PricingTable
 from ..store.db import open_db
 from ..store.repository import Repository
@@ -81,7 +81,7 @@ class CoreRuntime:
         """
         self._db = open_db(self._data_dir / "argus.db", read_only=self.read_only)
         self.repo = Repository(self._db)
-        self.pricing_table = load_pricing_table()
+        self.pricing_table = load_pricing_table(user_dir=user_pricing_dir(self._data_dir))
 
         self.adapters = available_adapters()
         if not self.adapters:

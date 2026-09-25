@@ -306,3 +306,85 @@ def test_backfill_reprices_zero_cost_turns(tmp_path: Path, repo):
     # 1000 in * $10/M + 2000 out * $50/M = 0.01 + 0.10
     assert abs(session.total_cost_usd - 0.11) < 1e-9
     assert repo.sessions_with_unpriced_turns(list(table.models.keys()), 10) == []
+
+
+def test_backfill_reprices_claude_opus_5_turns_after_table_upgrade(tmp_path: Path, repo):
+    """REGRESSION (H3): claude-opus-5 turns ingested under the 2026-06-12 table
+    (which lacked the model) are $0; the next start with the newer bundled
+    table re-prices them through sessions_with_unpriced_turns."""
+    from argus.collector.first_run import _backfill_missing_derived_data
+    from argus.collector.pipeline import ingest_file
+    from argus.pricing.load import _bundled_dir
+
+    claude_root = tmp_path / ".claude"
+    proj = claude_root / "projects" / "C--proj"
+    proj.mkdir(parents=True)
+    f = proj / "s1.jsonl"
+    line = json.loads(_line("s1", "m1", "2026-09-01T00:00:00Z"))
+    line["message"]["model"] = "claude-opus-5"
+    line["message"]["content"] = [{"type": "tool_use", "id": "tu_1", "name": "Bash", "input": {}}]
+    line["message"]["usage"].update(input_tokens=1000, output_tokens=2000)
+    f.write_text(json.dumps(line) + "\n", encoding="utf-8")
+    adapter = ClaudeCodeAdapter(claude_root)
+
+    old = load_pricing_table(_bundled_dir() / "2026-06-12.json")
+    ingest_file(adapter, f, repo, old)
+    assert repo.get_session("claude_code:s1").total_cost_usd == 0
+
+    _backfill_missing_derived_data([adapter], repo, load_pricing_table())
+    # 1000 in * $5/M + 2000 out * $25/M = 0.005 + 0.05
+    assert abs(repo.get_session("claude_code:s1").total_cost_usd - 0.055) < 1e-9
+
+
+def _opus5_line(sid: str, mid: str, ts: str, inp: int, out: int) -> str:
+    line = json.loads(_line(sid, mid, ts))
+    line["message"]["model"] = "claude-opus-5"
+    line["message"]["usage"].update(input_tokens=inp, output_tokens=out)
+    return json.dumps(line) + "\n"
+
+
+def test_reprices_zero_cost_turns_whose_transcript_is_gone(tmp_path: Path, repo):
+    """REGRESSION: a real archive held 645 claude-opus-5 turns ($105.71) at $0,
+    all from transcripts Claude Code had already deleted. Re-pricing by
+    re-reading the file can't reach them, but the turns keep their token
+    counts, so the cost is recomputed in the DB, sub-agent rollup included."""
+    from argus.pricing.load import _bundled_dir
+
+    claude_root = tmp_path / ".claude"
+    proj = claude_root / "projects" / "C--proj"
+    (proj / "s1" / "subagents").mkdir(parents=True)
+    parent = proj / "s1.jsonl"
+    sub = proj / "s1" / "subagents" / "agent-a.jsonl"
+    parent.write_text(_opus5_line("s1", "m1", "2026-09-01T00:00:00Z", 1000, 2000), encoding="utf-8")
+    sub.write_text(_opus5_line("s1", "m2", "2026-09-01T00:00:05Z", 2000, 4000), encoding="utf-8")
+    adapter = ClaudeCodeAdapter(claude_root)
+
+    old = load_pricing_table(_bundled_dir() / "2026-06-12.json")  # lacks claude-opus-5
+    from argus.collector.pipeline import ingest_file
+
+    ingest_file(adapter, parent, repo, old)
+    assert repo.get_session("claude_code:s1").total_cost_usd == 0
+    sub.unlink()
+    parent.unlink()  # Claude Code's cleanup: only the archive remains
+
+    handle = run_first_pass_ingest([adapter], repo, load_pricing_table())
+    assert handle.join(timeout=30)
+
+    # parent: 1000*$5/M + 2000*$25/M = 0.055; sub: 2000*$5/M + 4000*$25/M = 0.11
+    assert abs(repo.get_session("claude_code:s1/agent-a").total_cost_usd - 0.11) < 1e-9
+    assert abs(repo.get_session("claude_code:s1").total_cost_usd - (0.055 + 0.11)) < 1e-9
+    assert repo.sessions_with_unpriced_turns(list(load_pricing_table().models), 10) == []
+
+
+def test_placeholder_model_does_not_warn(caplog):
+    """`<synthetic>` is Claude Code's local placeholder (e.g. "No response
+    requested."), not a model a pricing table could ever list."""
+    import logging
+
+    from argus.pricing import compute
+
+    compute._warned_unknown.clear()
+    with caplog.at_level(logging.WARNING, logger="argus.pricing"):
+        cost = compute.compute_turn_cost({"model": "<synthetic>", "output_tokens": 0}, load_pricing_table())
+    assert cost == 0.0
+    assert not [r for r in caplog.records if "No price" in r.getMessage()]

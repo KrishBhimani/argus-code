@@ -12,7 +12,7 @@ import typer
 
 import argus.detectors  # noqa: F401  — triggers @register side-effects
 
-from .pricing.load import load_pricing_table
+from .pricing.load import load_pricing_table, user_pricing_dir
 from .pricing.refresh import diff_pricing, fetch_litellm_table
 from .scaffold.scaffolder import scaffold_project
 from .scaffold.snapshot import (
@@ -154,10 +154,13 @@ def start(
 
 
 @pricing_app.command("refresh")
-def pricing_refresh() -> None:
-    """Fetch the latest LiteLLM pricing and (after confirm) overwrite the bundled table."""
+def pricing_refresh(
+    data_dir: Path = typer.Option(_default_data_dir(), "--data-dir"),
+) -> None:
+    """Fetch the latest LiteLLM pricing and (after confirm) save it to <data-dir>/pricing."""
     _setup_logging()
-    current = load_pricing_table()
+    out_dir = user_pricing_dir(data_dir)
+    current = load_pricing_table(user_dir=out_dir)
     typer.echo("Fetching latest pricing from LiteLLM...")
     fresh = fetch_litellm_table()
     diff = diff_pricing(current, fresh)
@@ -177,19 +180,16 @@ def pricing_refresh() -> None:
     if not typer.confirm("Apply?"):
         typer.echo("Cancelled.")
         return
-    # Write into the repo's pricing/ dir if we're in dev; otherwise into the
-    # wheel's bundled dir (which is read-only for installed packages — print
-    # a hint).
-    try:
-        traversable = resources.files("argus") / "pricing"
-        out_dir = Path(str(traversable))
-        if not out_dir.is_dir():
-            raise FileNotFoundError(out_dir)
-    except (ModuleNotFoundError, FileNotFoundError):
-        out_dir = Path(__file__).resolve().parents[2] / "pricing"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    # User data dir, not the installed package: site-packages is wiped by an
+    # upgrade and may be read-only. load_pricing_table picks the newest
+    # version across this dir and the bundled tables.
     out_file = out_dir / f"{fresh.version}.json"
-    out_file.write_text(fresh.model_dump_json(indent=2), encoding="utf-8")
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_file.write_text(fresh.model_dump_json(indent=2), encoding="utf-8")
+    except OSError as e:
+        typer.echo(f"Could not write {out_file}: {e}", err=True)
+        raise typer.Exit(1) from e
     typer.echo(f"Wrote {out_file}")
 
 

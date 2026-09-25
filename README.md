@@ -243,7 +243,7 @@ Want the deeper tour? [ARCHITECTURE.md](./ARCHITECTURE.md).
 | `argus start --port <n>` | Port (default 4242). |
 | `argus start --host <h>` | Bind host (default `127.0.0.1`; `0.0.0.0` for LAN exposure). |
 | `argus start --data-dir <path>` | Override `~/.argus/`. |
-| `argus pricing refresh` | Update the bundled price table. |
+| `argus pricing refresh` | Fetch the latest price table into `~/.argus/pricing/` (newest table wins). |
 
 ### Keep more history in Claude Code itself
 

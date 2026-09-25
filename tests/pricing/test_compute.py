@@ -82,3 +82,22 @@ def test_returns_zero_for_unknown_model():
         _table(),
     )
     assert cost == 0
+
+
+def test_unknown_model_is_logged_once(caplog):
+    """REGRESSION (H3): an unpriced model silently cost $0; now it is logged,
+    once per model so a long session doesn't flood the log."""
+    import logging
+
+    from argus.pricing import compute
+    from argus.pricing.compute import compute_turn_cost
+    from argus.pricing.types import PricingTable
+
+    compute._warned_unknown.discard("claude-imaginary-9")
+    table = PricingTable(version="t", models={})
+    turn = {"model": "claude-imaginary-9", "fresh_input_tokens": 10, "output_tokens": 5}
+    with caplog.at_level(logging.WARNING, logger="argus.pricing"):
+        assert compute_turn_cost(turn, table) == 0.0
+        assert compute_turn_cost(turn, table) == 0.0
+    msgs = [r.getMessage() for r in caplog.records if "claude-imaginary-9" in r.getMessage()]
+    assert len(msgs) == 1
