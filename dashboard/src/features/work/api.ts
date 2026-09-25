@@ -8,6 +8,8 @@ export const WorkStatus = z.object({ enabled: z.boolean(), last_scan_at: z.strin
 const Project = z.object({
   id: z.number(), display_name: z.string(), root: z.string(), present: z.boolean(), last_error: z.string().nullable(),
   active_ms_30d: z.number(), active_estimated: z.boolean(), commits_30d: z.number(), daily_active_ms: z.array(z.number()), last_worked_at: z.string().nullable(),
+  // A project is every folder holding one repo (clones, worktrees); any folder's id opens it.
+  folder_ids: z.array(z.number()), folders: z.array(z.object({ id: z.number(), root: z.string(), present: z.boolean() })),
 });
 export const WorkProjects = z.object({ projects: z.array(Project) });
 const Tiles = z.object({ active_ms: z.number(), active_estimated: z.boolean(), cost: z.number(), commits: z.number(), cost_per_commit: z.number().nullable() });

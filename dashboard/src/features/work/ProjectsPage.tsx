@@ -37,6 +37,11 @@ export default function ProjectsPage() {
                       onClick={() => nav({ to: '/projects/$repo', params: { repo: String(p.id) }, search: { tab: 'overview' } })}>
                       <td className="px-3.5 py-2.5 font-mono" title={p.root}>
                         {p.display_name}
+                        {p.folders.length > 1 && (
+                          <span className="ml-2 text-[10px] px-1.5 rounded-full border border-line-2 text-ink-2 font-sans" title={p.folders.map((f) => f.root).join('\n')}>
+                            {p.folders.length} folders
+                          </span>
+                        )}
                         {!p.present && <span className="ml-2 text-[10px] px-1.5 rounded-sm border border-line-2 text-ink-2 font-sans">repo gone · archived</span>}
                         {p.last_error && <span className="ml-2 text-[10px] text-warn font-sans" title={p.last_error}>scan warning</span>}
                       </td>

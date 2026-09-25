@@ -104,3 +104,54 @@ def test_overview_survives_a_very_busy_project(tmp_path):
     conn.execute("INSERT INTO turn_attribution VALUES ('claude_code:A:bulk7', 'superpowers:tdd', NULL, NULL, NULL)")
     o = queries.overview(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z")
     assert {s["name"] for s in o["breakdowns"]["skills"]} == {"superpowers:brainstorming", "superpowers:tdd"}
+
+
+def _grouped(tmp_path):
+    """proj lives in two folders (/r and an older clone) with the same remote, plus a fork elsewhere."""
+    conn = _world(tmp_path)
+    r = Repository(open_db(tmp_path / "argus.db"))
+    r.upsert_session(session_factory("claude_code:C", "2026-09-12T10:00:00Z"))
+    r.upsert_turn(turn_factory("claude_code:C:m1", "claude_code:C", "2026-09-12T10:00:00Z", cost=3.0))
+    r.upsert_session(session_factory("claude_code:F", "2026-09-13T10:00:00Z"))
+    r.upsert_turn(turn_factory("claude_code:F:m1", "claude_code:F", "2026-09-13T10:00:00Z", cost=7.0))
+    r.db.close()
+    key = "remote:github.com/me/proj"
+    conn.execute("UPDATE repos SET project_key = ? WHERE id = 1", (key,))
+    conn.execute("INSERT INTO repos (id, root, display_name, user_emails, project_key) VALUES (2, '/old/proj-clone', 'proj-clone', '[\"me@x\"]', ?)", (key,))
+    conn.execute("INSERT INTO repos (id, root, display_name, user_emails, project_key) VALUES (3, '/fork/proj', 'proj', '[\"me@x\"]', 'remote:github.com/other/proj')")
+    conn.executemany("INSERT INTO session_repo VALUES (?, ?, ?, 'main')", [("claude_code:C", 2, "/old/proj-clone"), ("claude_code:F", 3, "/fork/proj")])
+    conn.execute("INSERT INTO session_facts VALUES ('claude_code:C', 'Old clone work', 'ai', NULL)")
+    # the clone holds the same commit abc1234 (weaker link there) plus one of its own
+    conn.execute("INSERT INTO commits VALUES (2, 'abc1234', 'Me', 'me@x', '2026-09-10T10:10:00Z', '2026-09-10T10:10:00Z', 'feat: a', 1, 0, 5, 1, 1)")
+    conn.execute("INSERT INTO commits VALUES (2, 'cl00001', 'Me', 'me@x', '2026-09-12T10:05:00Z', '2026-09-12T10:05:00Z', 'feat: c', 1, 0, 2, 0, 1)")
+    conn.execute("INSERT INTO commit_files VALUES (2, 'abc1234', 'src/a.py', 5, 1)")
+    conn.execute("INSERT INTO session_commits VALUES ('claude_code:C', 2, 'abc1234', 'inferred')")
+    conn.execute("INSERT INTO session_commits VALUES ('claude_code:C', 2, 'cl00001', 'exact')")
+    return conn
+
+
+def test_folders_of_one_repo_are_one_project_and_forks_stay_apart(tmp_path):
+    conn = _grouped(tmp_path)
+    ps = {p["id"]: p for p in queries.projects(conn, now_iso="2026-09-25T00:00:00Z")}
+    assert set(ps) == {1, 3}
+    p = ps[1]
+    assert p["display_name"] == "proj" and p["folder_ids"] == [1, 2]
+    assert [f["root"] for f in p["folders"]] == ["/r", "/old/proj-clone"]
+    assert p["commits_30d"] == 2          # abc1234 once, cl00001; Mate's commit isn't "mine"
+    assert p["active_ms_30d"] == 5_400_000
+
+
+def test_grouped_overview_counts_shared_commits_once_with_the_best_link(tmp_path):
+    conn = _grouped(tmp_path)
+    frm, to = "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z"
+    o = queries.overview(conn, 1, frm, to)
+    assert o["tiles"]["commits"] == 2 and o["tiles"]["cost"] == 7.0    # A 2 + B 2 + C 3; the fork's 7 is not here
+    assert sorted(s["title"] for s in o["stories"]) == ["Build A", "Fix B", "Old clone work"]
+    build_a = next(s for s in o["stories"] if s["title"] == "Build A")
+    assert build_a["commits"]["exact"] == 1                             # exact beats the clone's inferred link
+    assert o["breakdowns"]["files"] == [{"name": "src/a.py", "value": 1}]
+    assert queries.overview(conn, 2, frm, to) == o                      # any folder's id opens the project
+    t = queries.timeline(conn, 2, frm, to, scope="all")
+    shas = [c["sha"] for d in t["days"] for i in d["items"] for c in ([i] if i["kind"] == "commit" else i["commits"])]
+    assert shas.count("abc1234") == 1
+    assert queries.first_activity(conn, 2) == "2026-09-10T10:00:00Z"

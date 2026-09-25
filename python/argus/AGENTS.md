@@ -45,6 +45,11 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   `<data_dir>/work.db`; `argus.db` is reached solely through a read-only `ATTACH`
   (asserted by `tests/work/test_isolation.py`). Nothing imports it unless the flag is
   on. Removal = delete this package, `features/work/`, two routes, and `work.db`.
+  A **project is a repo, not a folder**: `repos` has one row per folder, and folders
+  sharing `project_key` (normalized `origin` URL → else first commit → else the path;
+  credentials stripped) are one project. Queries resolve any folder id to the whole
+  group and count each commit sha once, keeping the strongest link. Columns added
+  after the first trial build are added in `open_work_db` only when missing.
 - `detectors/` — alert detectors: the registry, the shared helpers in `base.py`,
   and one module per rule (`tool_error_rate_spike`, `cost_spike`, `cache_hit_drop`).
 - `pricing/` — pricing table load / refresh / compute; bundled JSON under repo `pricing/`.

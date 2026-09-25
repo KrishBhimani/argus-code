@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from ..store.repository import normalize_project_path
+
 _RS, _US, _GS = "\x1e", "\x1f", "\x1d"
 LOG_FORMAT = (
     "%x1e%H%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%cI%x1f%s%x1f"
@@ -79,6 +81,44 @@ def ensure_repo(conn: sqlite3.Connection, root: str) -> int:
     return conn.execute("SELECT id FROM repos WHERE root = ?", (root,)).fetchone()["id"]
 
 
+def normalize_remote(url: str) -> str | None:
+    """host/owner/repo, lowercased, for any URL form of one hosted repo; None for a local path.
+
+    Credentials in the URL (https://user:token@host/...) are dropped, so a token is never stored.
+    """
+    u = url.strip()
+    m = re.match(r"^[a-z][a-z0-9+.-]*://(?:[^@/]*@)?([^/:]+)(?::\d+)?/(.+)$", u, re.I)
+    if m and not u.lower().startswith("file:"):
+        host, path = m.groups()
+    else:
+        m = re.match(r"^(?:[^@/]+@)?([^/:]+\.[^/:]+):(?!/)(.+)$", u)   # scp form: git@host:owner/repo
+        if not m:
+            return None
+        host, path = m.groups()
+    path = re.sub(r"(\.git)?/*$", "", path.strip("/"))
+    return f"{host}/{path}".lower() if path else None
+
+
+def project_key(root: str) -> str:
+    """Which project a folder belongs to: its remote, else its first commit, else the folder itself.
+
+    Clones and worktrees of one repo share a key; forks keep their own remote and stay apart.
+    """
+    try:
+        remote = normalize_remote(run_git(["config", "--get", "remote.origin.url"], root, timeout=15))
+    except GitError:
+        remote = None
+    if remote:
+        return f"remote:{remote}"
+    try:
+        firsts = sorted(run_git(["rev-list", "--max-parents=0", "HEAD"], root, timeout=30).split())
+    except GitError:
+        firsts = []
+    if firsts:
+        return f"root:{firsts[0]}"
+    return f"path:{normalize_project_path(root)}"
+
+
 def parse_log(text: str) -> list[CommitRec]:
     out: list[CommitRec] = []
     for rec in text.split(_RS):
@@ -134,7 +174,7 @@ def _ref_tips(root: str) -> list[str]:
 
 
 def scan_repo(conn: sqlite3.Connection, repo_id: int, root: str, now_iso: str) -> int:
-    row = conn.execute("SELECT last_scanned_at, ref_tips FROM repos WHERE id = ?", (repo_id,)).fetchone()
+    row = conn.execute("SELECT last_scanned_at, ref_tips, project_key FROM repos WHERE id = ?", (repo_id,)).fetchone()
     base = ["log", "--all", "--no-color", "--no-renames", "--numstat", f"--format={LOG_FORMAT}"]
     error = None
     tips = _ref_tips(root)
@@ -157,6 +197,8 @@ def scan_repo(conn: sqlite3.Connection, repo_id: int, root: str, now_iso: str) -
             text = run_git([*base, f"--since={since.isoformat()}"], root)
             error = f"full history unavailable ({e}); read the last {FALLBACK_DAYS} days"
     commits = parse_log(text)
+    # Re-derived when refs move (cheap) or on first sight; a remote change with no new commit waits for one.
+    key = row["project_key"] if row["project_key"] and old is not None and set(old) == set(tips) else project_key(root)
     try:
         emails = [run_git(["config", "user.email"], root, timeout=15).strip().lower()]
     except GitError:
@@ -165,8 +207,8 @@ def scan_repo(conn: sqlite3.Connection, repo_id: int, root: str, now_iso: str) -
     try:
         _store(conn, repo_id, commits)
         conn.execute(
-            "UPDATE repos SET user_emails = ?, last_scanned_at = ?, last_error = ?, present = 1, ref_tips = ? WHERE id = ?",
-            (json.dumps([e for e in emails if e]), now_iso, error, json.dumps(tips), repo_id),
+            "UPDATE repos SET user_emails = ?, last_scanned_at = ?, last_error = ?, present = 1, ref_tips = ?, project_key = ? WHERE id = ?",
+            (json.dumps([e for e in emails if e]), now_iso, error, json.dumps(tips), key, repo_id),
         )
         conn.execute("COMMIT")
     except BaseException:

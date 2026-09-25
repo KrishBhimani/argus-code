@@ -56,3 +56,17 @@ def test_works_without_argus_db(tmp_path):
     attached = {r["name"] for r in conn.execute("PRAGMA database_list")}
     assert "core" not in attached
     conn.close()
+
+
+def test_an_existing_work_db_gains_project_key_without_losing_rows(tmp_path):
+    c = sqlite3.connect(tmp_path / "work.db")
+    c.execute("""CREATE TABLE repos (id INTEGER PRIMARY KEY AUTOINCREMENT, root TEXT NOT NULL UNIQUE,
+                 display_name TEXT NOT NULL, user_emails TEXT NOT NULL DEFAULT '[]', last_scanned_at TEXT,
+                 last_error TEXT, present INTEGER NOT NULL DEFAULT 1, ref_tips TEXT)""")
+    c.execute("INSERT INTO repos (root, display_name) VALUES ('/r', 'r')")
+    c.commit()
+    c.close()
+    open_work_db(tmp_path).close()
+    conn = open_work_db(tmp_path)   # twice: adding the column is idempotent
+    assert tuple(conn.execute("SELECT root, project_key FROM repos").fetchone()) == ("/r", None)
+    conn.close()

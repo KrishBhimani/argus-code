@@ -124,3 +124,51 @@ def test_rescan_with_unchanged_refs_skips_git_log(tmp_path, monkeypatch):
     monkeypatch.setattr(gitscan, "run_git", lambda args, cwd, timeout=60, **kw: (logs.append(args[0]), real(args, cwd, timeout, **kw))[1])
     assert gitscan.scan_repo(conn, rid, root, "2026-09-06T00:00:00Z") == 0
     assert "log" not in logs
+
+
+SAME = "github.com/krishbhimani/argus-code"
+
+
+@pytest.mark.parametrize("url", [
+    "https://github.com/KrishBhimani/argus-code",
+    "https://github.com/KrishBhimani/argus-code.git",
+    "https://github.com/KrishBhimani/argus-code/",
+    "git@github.com:KrishBhimani/argus-code.git",
+    "ssh://git@github.com/KrishBhimani/argus-code.git",
+    "https://someone:ghp_secret@github.com/KrishBhimani/argus-code.git",
+])
+def test_remote_urls_of_one_repo_normalize_alike_without_credentials(url):
+    assert gitscan.normalize_remote(url) == SAME
+
+
+def test_a_local_path_remote_is_not_an_identity():
+    assert gitscan.normalize_remote("C:/code/other-clone") is None
+    assert gitscan.normalize_remote("/home/me/other-clone") is None
+    assert gitscan.normalize_remote("file:///home/me/other-clone") is None
+
+
+def test_project_key_prefers_remote_then_first_commit_then_folder(tmp_path):
+    a = make_repo(tmp_path / "a")
+    git(a, "remote", "add", "origin", "https://github.com/Me/Proj.git")
+    assert gitscan.project_key(str(a)) == "remote:github.com/me/proj"
+    b = tmp_path / "b"
+    git(tmp_path, "clone", "-q", str(a), str(b))
+    git(b, "remote", "remove", "origin")
+    first = git(a, "rev-list", "--max-parents=0", "HEAD").split()[0]
+    assert gitscan.project_key(str(b)) == f"root:{first}"
+    w = tmp_path / "wt"
+    git(a, "worktree", "add", "-q", "-b", "side", str(w))
+    assert gitscan.project_key(str(w)) == gitscan.project_key(str(a))
+    e = tmp_path / "empty"
+    e.mkdir()
+    git(e, "init", "-q")
+    assert gitscan.project_key(str(e)).startswith("path:")
+
+
+def test_scan_records_the_project_key(tmp_path):
+    a = make_repo(tmp_path / "a")
+    git(a, "remote", "add", "origin", "git@github.com:Me/Proj.git")
+    conn = open_work_db(tmp_path / "data")
+    rid = gitscan.ensure_repo(conn, str(a).replace("\\", "/"))
+    gitscan.scan_repo(conn, rid, str(a), "2026-09-05T00:00:00Z")
+    assert conn.execute("SELECT project_key FROM repos WHERE id = ?", (rid,)).fetchone()[0] == "remote:github.com/me/proj"

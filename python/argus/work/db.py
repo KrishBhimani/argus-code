@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS repos (
   last_scanned_at TEXT,
   last_error TEXT,
   present INTEGER NOT NULL DEFAULT 1,
-  ref_tips TEXT
+  ref_tips TEXT,
+  project_key TEXT
 );
 CREATE TABLE IF NOT EXISTS commits (
   repo_id INTEGER NOT NULL, sha TEXT NOT NULL,
@@ -74,6 +75,11 @@ def open_work_db(data_dir: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA busy_timeout = 5000")
     conn.executescript(SCHEMA)
+    # Columns added after the first trial build; a work.db made before them gains them here.
+    for table, column in (("repos", "project_key TEXT"),):
+        name = column.split()[0]
+        if not conn.execute("SELECT 1 FROM pragma_table_info(?) WHERE name = ?", (table, name)).fetchone():
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column}")
     conn.execute(
         "INSERT OR IGNORE INTO meta (key, value) VALUES ('work_schema_version', ?)",
         (WORK_SCHEMA_VERSION,),
