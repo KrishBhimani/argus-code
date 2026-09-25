@@ -35,8 +35,11 @@ analyses in `src/lib/analysis/`.
   unless `argus start --work`). Its API client lives in `features/work/api.ts`, not
   `lib/api`, so the trial stays removable in one folder. A project can span several
   folders (`folder_ids`, `folders`): find a project by `folder_ids.includes(id)` so
-  old per-folder links still open it. `/projects/$repo?tab=timeline&focus=<ids>`
-  scrolls to and highlights those sessions (a story's "Open in Timeline").
+  old per-folder links still open it. A project has two tabs, Overview and Activity
+  (`?tab=timeline` from before the redesign maps to Activity);
+  `/projects/$repo?tab=activity&focus=<ids>` scrolls to and highlights those sessions.
+  Commit evidence is shown in plain words via `fmt.ts` `EVIDENCE` (exact → made here,
+  coauthored → Claude co-author, inferred → likely); keep that mapping in one place.
 - **SPA routing.** Deep links (`/sessions/<id>`) are served by the `index.html`
   fallback in `python/argus/server/app.py`; legacy `/session?id=` and `/prompts`
   URLs redirect client-side (`src/routes/session.tsx`, `src/routes/prompts.tsx`).

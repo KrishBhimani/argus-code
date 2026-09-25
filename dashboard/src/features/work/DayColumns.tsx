@@ -4,8 +4,8 @@ export type Sel = { a: number; b: number } | null;
 export const normSel = (a: number, b: number) => ({ a: Math.min(a, b), b: Math.max(a, b) });
 
 /** Single-series day columns (series slot 1) with click / drag-to-select. Hand-rolled SVG, like Bars. */
-export function DayColumns({ days, values, format, sel, onSel, height = 64, label }: {
-  days: string[]; values: number[]; format: (v: number) => string; sel: Sel; onSel: (s: Sel) => void; height?: number; label: string;
+export function DayColumns({ days, values, format, sel, onSel, height = 64, label, color = '#3987e5' }: {
+  days: string[]; values: number[]; format: (v: number) => string; sel: Sel; onSel: (s: Sel) => void; height?: number; label: string; color?: string;
 }) {
   // A drag is previewed locally and committed once on release: committing on every
   // column crossed fired one API query per day, which queued up behind each other.
@@ -49,7 +49,7 @@ export function DayColumns({ days, values, format, sel, onSel, height = 64, labe
             onPointerUp={() => end(i)}>
             <title>{`${d} · ${format(values[i])}`}</title>
             <rect x={i * w} y={0} width={w} height={height} fill={on ? 'var(--color-accent)' : 'transparent'} fillOpacity={on ? 0.1 : 0} />
-            <rect x={i * w + w * 0.15} y={height - h} width={w * 0.7} height={h} rx={0.6} fill="#3987e5" fillOpacity={shown && !on ? 0.35 : 1} />
+            <rect x={i * w + w * 0.15} y={height - h} width={w * 0.7} height={h} rx={0.6} fill={color} fillOpacity={shown && !on ? 0.35 : 1} />
           </g>
         );
       })}

@@ -1,16 +1,33 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import OverviewTab from './OverviewTab';
 
-const story = (title: string, branch: string, skills: string[] = [], total = 4) => ({
-  title, branch, prs: [212], sessions: 2, session_ids: [title], active_ms: 7_200_000, cost: 64, first_ts: '2026-09-16T10:00:00Z', last_ts: '2026-09-16T12:00:00Z',
-  commits: total ? { total, exact: 3, coauthored: 0, inferred: 1 } : { total: 0, exact: 0, coauthored: 0, inferred: 0 },
-  added: 96, deleted: 41, files: 5, skills, output_tokens: 290_757, whole: null as null | { first_ts: string; last_ts: string; output_tokens: number; cost: number },
+type Whole = null | { first_ts: string; last_ts: string; output_tokens: number; cost: number };
+const story = (o: object) => ({
+  title: 't', branch: 'main', prs: [] as number[], sessions: 1, session_ids: ['s1'], active_ms: 7_200_000, active_estimated: false, cost: 64,
+  first_ts: '2026-09-16T10:00:00Z', last_ts: '2026-09-16T12:00:00Z', commits: { total: 0, exact: 0, coauthored: 0, inferred: 0 },
+  added: 0, deleted: 0, files: 0, skills: [] as string[], output_tokens: 290_757, whole: null as Whole,
+  session_list: [] as object[], commit_list: [] as object[], ...o,
 });
+const fix = story({
+  title: 'fix-severe-issues', prs: [26, 27, 49], session_ids: ['claude_code:a', 'claude_code:b'], sessions: 2,
+  first_ts: '2026-09-22T18:11:00Z', last_ts: '2026-09-25T18:18:00Z', commits: { total: 2, exact: 1, coauthored: 0, inferred: 1 },
+  added: 5024, deleted: 974, files: 12, output_tokens: 622_442, cost: 95.78,
+  session_list: [
+    { session_id: 'claude_code:a', title: 'fix-severe-issues', model: 'claude-opus-5-5', turns: 814, first_ts: '2026-09-22T18:11:00Z', last_ts: '2026-09-25T18:18:00Z', active_ms: 14_861_486, active_estimated: true },
+    { session_id: 'claude_code:b', title: 'follow-up', model: 'claude-opus-5-5', turns: 12, first_ts: '2026-09-25T10:00:00Z', last_ts: '2026-09-25T11:00:00Z', active_ms: 600_000, active_estimated: false },
+  ],
+  commit_list: [
+    { sha: '4d72650aa', subject: 'feat(detectors): implement cost_spike (#26)', evidence: 'exact' },
+    { sha: 'b890b93bb', subject: 'feat(work): trial work.db', evidence: 'inferred' },
+  ],
+});
+const docs = story({ title: 'Docs review', branch: 'development', session_ids: ['claude_code:d'], last_ts: '2026-09-10T10:00:00Z', first_ts: '2026-09-10T09:00:00Z' });
 const base = {
-  tiles: { active_ms: 147_600_000, cost: 1240, commits: 86, cost_per_commit: 14.4 }, prior: { active_ms: 1, cost: 1050, commits: 60, cost_per_commit: 17.5 },
+  tiles: { active_ms: 23_581_165, active_estimated: true, cost: 268.17, commits: 51, cost_per_commit: 5.26 },
+  prior: { active_ms: 53_591_910, active_estimated: true, cost: 529.74, commits: 67, cost_per_commit: 7.9 },
   daily: { days: ['2026-09-15', '2026-09-16'], active_ms: [3_600_000, 7_200_000], commits: [2, 4], output_tokens: [120_000, 450_000], cost: [12, 30] },
-  stories: [story('Fix blocking calls', 'fix/blocking', ['superpowers:brainstorming']), story('Docs review', 'development', [], 0)],
-  breakdowns: { branches: [{ name: 'fix/blocking', value: 64 }], skills: [{ name: 'superpowers:brainstorming', value: 0.3 }], files: [{ name: 'api/x.py', value: 3 }] },
+  stories: [docs, fix],
+  breakdowns: { branches: [{ name: 'main', value: 214 }, { name: 'development', value: 55 }], skills: [], files: [] },
 };
 const loading = { on: false };
 vi.mock('./api', () => ({
@@ -19,55 +36,75 @@ vi.mock('./api', () => ({
     loading.on && range.from ? { data: undefined, isFetching: true, isLoading: true, error: null } : { data: base, isFetching: false, isLoading: false, error: null },
 }));
 vi.mock('@tanstack/react-router', () => ({
-  useNavigate: () => vi.fn(),
-  Link: (p: { children: React.ReactNode; search?: unknown }) => <a data-search={JSON.stringify(p.search)}>{p.children}</a>,
+  Link: (p: { children: React.ReactNode; search?: unknown; params?: unknown; to: string }) =>
+    <a data-to={p.to} data-search={JSON.stringify(p.search)} data-params={JSON.stringify(p.params)}>{p.children}</a>,
 }));
 
-it('shows tiles, both day charts, stories and the rail', () => {
+it('starts with where you left off: the latest piece of work', () => {
   render(<OverviewTab repo={1} />);
-  expect(screen.getByText('41h')).toBeInTheDocument();
+  const card = screen.getByText('WHERE YOU LEFT OFF').parentElement!.parentElement!;
+  expect(within(card).getByText('fix-severe-issues')).toBeInTheDocument();
+  expect(within(card).getByText(/2 commits · 3 PRs, latest #49/)).toBeInTheDocument();
+  expect(JSON.parse(within(card).getByText('Open last session').getAttribute('data-params')!)).toEqual({ id: 'claude_code:b' });
+  expect(JSON.parse(within(card).getByText('See it in Activity').getAttribute('data-search')!)).toEqual({ tab: 'activity', focus: 'claude_code:a,claude_code:b' });
+});
+
+it('shows four plain numbers with the change against the previous period', () => {
+  render(<OverviewTab repo={1} />);
+  expect(screen.getByText('Claude output')).toBeInTheDocument();
+  expect(screen.getByText('570.0k')).toBeInTheDocument();
+  expect(screen.getByText('↓ 49% vs previous 30 days')).toBeInTheDocument();   // cost
+  expect(screen.getByText('↓ 24% vs previous 30 days')).toBeInTheDocument();   // commits
+  expect(screen.getByText('≈6.6h')).toBeInTheDocument();
+});
+
+it('all time shows no changes (there is no earlier period)', () => {
+  render(<OverviewTab repo={1} days={0} />);
+  expect(screen.queryByText(/vs previous/)).not.toBeInTheDocument();
+});
+
+it('switches the chart between output tokens (default), cost and time', () => {
+  render(<OverviewTab repo={1} />);
+  expect(screen.getByRole('tab', { name: 'Tokens' })).toHaveAttribute('aria-selected', 'true');
   expect(screen.getByLabelText('Output tokens by day')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('tab', { name: 'Cost' }));
+  expect(screen.getByLabelText('Cost by day')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('tab', { name: 'Time' }));
+  expect(screen.getByLabelText('Active hours by day')).toBeInTheDocument();
   expect(screen.getByLabelText('Commits by day')).toBeInTheDocument();
-  expect(screen.getByText('Fix blocking calls')).toBeInTheDocument();
-  expect(screen.getByText('4 commits')).toBeInTheDocument();
-  expect(screen.getByText('(3 exact · 1 inferred)')).toBeInTheDocument();
-  expect(screen.getByText('no commits: research')).toBeInTheDocument();
 });
 
-it('clicking a branch filters the stories; the chip clears it', () => {
+it('lists the work newest first; a row expands to its sessions and commits in plain words', () => {
   render(<OverviewTab repo={1} />);
-  fireEvent.click(screen.getByRole('button', { name: 'fix/blocking' }));
-  expect(screen.queryByText('Docs review')).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: /branch: fix\/blocking/ }));
-  expect(screen.getByText('Docs review')).toBeInTheDocument();
+  expect(screen.getByText('2 pieces of work')).toBeInTheDocument();
+  const row = screen.getByRole('button', { name: /fix-severe-issues/ });
+  expect(row).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.queryByText('feat(work): trial work.db')).not.toBeInTheDocument();
+  fireEvent.click(row);
+  expect(row).toHaveAttribute('aria-expanded', 'true');
+  expect(screen.getByText('feat(work): trial work.db')).toBeInTheDocument();
+  expect(screen.getByText('made here')).toBeInTheDocument();
+  expect(screen.getByText('likely')).toBeInTheDocument();
+  expect(screen.getByText(/814 turns/)).toBeInTheDocument();
+  expect(screen.getByText('PRs · #26 #27 #49')).toBeInTheDocument();
 });
 
-it('marks estimated active time with ≈ (spec §5)', () => {
-  const saved = base.tiles;
-  base.tiles = { ...base.tiles, active_estimated: true } as typeof base.tiles;
+it('branch chips filter the work', () => {
   render(<OverviewTab repo={1} />);
-  expect(screen.getByText('≈41h')).toBeInTheDocument();
-  base.tiles = saved;
+  fireEvent.click(screen.getByRole('button', { name: 'main · $214' }));
+  expect(screen.queryByRole('button', { name: /Docs review/ })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'All branches' }));
+  expect(screen.getByRole('button', { name: /Docs review/ })).toBeInTheDocument();
 });
 
-it('labels both day charts in plain words with their peak, and names the period', () => {
-  render(<OverviewTab repo={1} days={90} />);
-  expect(screen.getByText("Claude's output (tokens)")).toBeInTheDocument();
-  expect(screen.getByText('peak 450.0k')).toBeInTheDocument();
-  expect(screen.getByText('Commits landed')).toBeInTheDocument();
-  expect(screen.getByText('peak 4')).toBeInTheDocument();
-  expect(screen.getByText(/WORK · LAST 90 DAYS/)).toBeInTheDocument();
-});
-
-it('shows no vs-prior deltas for all time (there is no earlier period)', () => {
-  const tiles = (days?: number) => {
-    const { container, unmount } = render(<OverviewTab repo={1} days={days} />);
-    const text = container.querySelector('.grid-cols-4')!.textContent!;
-    unmount();
-    return text;
-  };
-  expect(tiles(30)).toMatch(/%/);
-  expect(tiles(0)).not.toMatch(/%/);
+it('an expanded slice of a longer session says so, with the whole totals', () => {
+  const saved = base.stories;
+  base.stories = [{ ...fix, whole: { first_ts: '2026-09-03T15:24:45Z', last_ts: '2026-09-17T23:32:06Z', output_tokens: 947_908, cost: 430.67 } }];
+  render(<OverviewTab repo={1} />);
+  fireEvent.click(screen.getByRole('button', { name: /fix-severe-issues/ }));
+  expect(screen.getByText(/part of a longer session/)).toHaveTextContent('947.9k tokens');
+  expect(screen.getByText(/part of a longer session/)).toHaveTextContent('$431');
+  base.stories = saved;
 });
 
 it('while a brushed range loads, it says so instead of "No work in this range"', () => {
@@ -78,37 +115,4 @@ it('while a brushed range loads, it says so instead of "No work in this range"',
   expect(screen.queryByText('No work in this range')).not.toBeInTheDocument();
   expect(screen.getByText(/Loading/)).toBeInTheDocument();
   loading.on = false;
-});
-
-it('switches the top chart between output tokens (default), cost and working time', () => {
-  render(<OverviewTab repo={1} />);
-  expect(screen.getByRole('tab', { name: 'Tokens' })).toHaveAttribute('aria-selected', 'true');
-  expect(screen.getByLabelText('Output tokens by day')).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('tab', { name: 'Cost' }));
-  expect(screen.getByText('Cost ($)')).toBeInTheDocument();
-  expect(screen.getByLabelText('Cost by day')).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('tab', { name: 'Time' }));
-  expect(screen.getByText("Claude's working time")).toBeInTheDocument();
-  expect(screen.getByText('peak 2h')).toBeInTheDocument();
-});
-
-it('shows the output tokens of each story', () => {
-  render(<OverviewTab repo={1} />);
-  expect(screen.getAllByText(/290\.8k tokens/).length).toBeGreaterThan(0);
-});
-
-it('says when a story is a slice of a longer session, with the whole totals', () => {
-  const s0 = base.stories[0];
-  base.stories[0] = { ...s0, whole: { first_ts: '2026-09-03T15:24:45Z', last_ts: '2026-09-17T23:32:06Z', output_tokens: 947_908, cost: 430.67 } };
-  render(<OverviewTab repo={1} />);
-  expect(screen.getByText(/in this range/)).toBeInTheDocument();
-  expect(screen.getByText(/part of a longer session/)).toHaveTextContent('947.9k tokens');
-  expect(screen.getByText(/part of a longer session/)).toHaveTextContent('$431');
-  base.stories[0] = s0;
-});
-
-it('Open in Timeline points at the story sessions', () => {
-  render(<OverviewTab repo={1} />);
-  const link = screen.getAllByText('Open in Timeline →')[0];
-  expect(JSON.parse(link.getAttribute('data-search')!)).toEqual({ tab: 'timeline', focus: 'Fix blocking calls' });
 });
