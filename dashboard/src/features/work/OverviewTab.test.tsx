@@ -33,3 +33,11 @@ it('clicking a branch filters the stories; the chip clears it', () => {
   fireEvent.click(screen.getByRole('button', { name: /branch: fix\/blocking/ }));
   expect(screen.getByText('Docs review')).toBeInTheDocument();
 });
+
+it('marks estimated active time with ≈ (spec §5)', () => {
+  const saved = base.tiles;
+  base.tiles = { ...base.tiles, active_estimated: true } as typeof base.tiles;
+  render(<OverviewTab repo={1} />);
+  expect(screen.getByText('≈41h')).toBeInTheDocument();
+  base.tiles = saved;
+});

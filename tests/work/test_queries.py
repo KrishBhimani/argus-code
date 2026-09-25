@@ -66,3 +66,20 @@ def test_timeline_nests_commits_under_sessions(tmp_path):
     assert any(i["kind"] == "commit" and i["sha"] == "def5678" for i in items)   # teammate commit, unlinked
     only_sessions = queries.timeline(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z", kind="sessions")
     assert all(i["kind"] == "session" for d in only_sessions["days"] for i in d["items"])
+
+
+def test_estimated_active_time_is_flagged_everywhere(tmp_path):
+    """Review I-5 / spec §5: time estimated from line gaps (older Claude Code, no
+    turn_duration) must be labelled as an estimate ("≈"), not shown as measured."""
+    conn = _world(tmp_path)
+    frm, to = "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z"
+    assert queries.overview(conn, 1, frm, to)["tiles"]["active_estimated"] is False
+    conn.execute("DELETE FROM active_spans WHERE session_id = 'claude_code:B'")
+    conn.execute("INSERT INTO active_spans VALUES ('claude_code:B', '2026-09-20T22:30:00Z', 60000, 'estimated')")
+    o = queries.overview(conn, 1, frm, to)
+    assert o["tiles"]["active_estimated"] is True
+    assert {s["title"]: s["active_estimated"] for s in o["stories"]} == {"Fix B": True, "Build A": False}
+    (p,) = queries.projects(conn, now_iso="2026-09-25T00:00:00Z")
+    assert p["active_estimated"] is True
+    items = [i for d in queries.timeline(conn, 1, frm, to)["days"] for i in d["items"] if i["kind"] == "session"]
+    assert {i["session_id"]: i["active_estimated"] for i in items} == {"claude_code:A": False, "claude_code:B": True}

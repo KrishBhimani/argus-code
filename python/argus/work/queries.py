@@ -45,7 +45,7 @@ def _active_rows(conn, ids: list[str], frm: str, to: str) -> list[sqlite3.Row]:
     if not ids:
         return []
     return conn.execute(
-        f"""SELECT a.session_id, a.ts, a.ms FROM active_spans a
+        f"""SELECT a.session_id, a.ts, a.ms, a.kind FROM active_spans a
             WHERE a.session_id IN ({_in(ids)}) AND a.ts >= ? AND a.ts < ?
               AND (a.kind = 'measured' OR NOT EXISTS (
                    SELECT 1 FROM active_spans m WHERE m.session_id = a.session_id AND m.kind = 'measured'))""",
@@ -74,10 +74,12 @@ def _commits(conn, repo_id: int, frm: str, to: str, scope: str) -> list[sqlite3.
 
 
 def _tiles(conn, repo_id, ids, frm, to, scope) -> dict:
-    active = sum(r["ms"] for r in _active_rows(conn, ids, frm, to))
+    spans = _active_rows(conn, ids, frm, to)
+    active = sum(r["ms"] for r in spans)
     cost = sum(r["cost_usd"] for r in _turn_rows(conn, ids, frm, to))
     commits = len(_commits(conn, repo_id, frm, to, scope))
-    return {"active_ms": active, "cost": cost, "commits": commits,
+    return {"active_ms": active, "active_estimated": any(r["kind"] == "estimated" for r in spans),
+            "cost": cost, "commits": commits,
             "cost_per_commit": (cost / commits) if commits else None}
 
 
@@ -101,6 +103,7 @@ def projects(conn: sqlite3.Connection, now_iso: str, tz: int = 0) -> list[dict]:
             "id": r["id"], "display_name": r["display_name"], "root": r["root"], "present": bool(r["present"]),
             "last_error": r["last_error"],
             "active_ms_30d": sum(s["ms"] for s in spans),
+            "active_estimated": any(s["kind"] == "estimated" for s in spans),
             "commits_30d": len(_commits(conn, r["id"], frm, to, "mine")),
             "daily_active_ms": list(daily.values()),
             "last_worked_at": max(filter(None, [last_turn, last_commit]), default=None),
@@ -114,8 +117,11 @@ def _summaries(conn, repo_id, ids, frm, to, scope) -> list[SessionSummary]:
     for t in turns:
         by_sid.setdefault(t["sid"], []).append(t)
     active: dict[str, int] = {}
+    estimated: set[str] = set()
     for a in _active_rows(conn, list(by_sid), frm, to):
         active[a["session_id"]] = active.get(a["session_id"], 0) + a["ms"]
+        if a["kind"] == "estimated":
+            estimated.add(a["session_id"])
     commits_by_sid: dict[str, list[dict]] = {}
     for c in _commits(conn, repo_id, frm, to, scope):
         if c["session_id"]:
@@ -132,7 +138,7 @@ def _summaries(conn, repo_id, ids, frm, to, scope) -> list[SessionSummary]:
         stamps = sorted(t["timestamp"] for t in ts)
         out.append(SessionSummary(sid, facts["title"] if facts else None, branch, stamps[0], stamps[-1],
                                   active.get(sid, 0), sum(t["cost_usd"] for t in ts), len(ts), skills, prs,
-                                  commits_by_sid.get(sid, [])))
+                                  commits_by_sid.get(sid, []), sid in estimated))
     return out
 
 
@@ -196,7 +202,7 @@ def timeline(conn: sqlite3.Connection, repo_id: int, frm: str, to: str, kind: st
             commits = [{**c, **dict(conn.execute("SELECT subject, author_name FROM commits WHERE repo_id = ? AND sha = ?",
                                                     (repo_id, c["sha"])).fetchone())} for c in s.commits]
             items.append({"kind": "session", "session_id": s.session_id, "title": s.title, "branch": s.branch,
-                          "first_ts": s.first_ts, "last_ts": s.last_ts, "active_ms": s.active_ms, "cost": s.cost,
+                          "first_ts": s.first_ts, "last_ts": s.last_ts, "active_ms": s.active_ms, "active_estimated": s.active_estimated, "cost": s.cost,
                           "turns": s.turns, "model": core["primary_model"] if core else None, "tool_errors": errors,
                           "commits": [] if kind == "sessions" else commits, "sort_ts": s.first_ts})
     if kind in ("all", "commits") and branch is None:

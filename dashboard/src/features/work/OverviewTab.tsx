@@ -24,7 +24,7 @@ function StoryCard({ s, repo }: { s: StoryT; repo: number }) {
         {s.branch && <span className="font-mono text-[10px] px-1.5 rounded-full border border-line-2 text-ink-1">{s.branch}</span>}
         {s.prs.map((p) => <span key={p} className="text-[10px] px-1.5 rounded-full border border-line-2 text-ink-1">PR #{p}</span>)}
       </div>
-      <div className="text-[11px] text-ink-2">{s.sessions} session{s.sessions === 1 ? '' : 's'} · {hours(s.active_ms)} active · {usd(s.cost)}</div>
+      <div className="text-[11px] text-ink-2">{s.sessions} session{s.sessions === 1 ? '' : 's'} · {hours(s.active_ms, s.active_estimated)} active · {usd(s.cost)}</div>
       <div className="text-[11px] text-ink-1">
         {s.commits.total === 0 ? 'no commits: research' : <>
           <span>{num(s.commits.total)} commits</span> <span className="text-ink-2">({ev})</span> · +{num(s.added)} / −{num(s.deleted)} · {num(s.files)} files
@@ -53,7 +53,7 @@ export default function OverviewTab({ repo, scope = 'mine' }: { repo: number; sc
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-4 gap-3">
-        <Tile label="Active time" value={hours(tiles.active_ms)} sub="Claude working, not wall clock" delta={delta(tiles.active_ms, prior.active_ms)} />
+        <Tile label="Active time" value={hours(tiles.active_ms, tiles.active_estimated)} sub="Claude working, not wall clock" delta={delta(tiles.active_ms, prior.active_ms)} />
         <Tile label="Est. cost" value={usd(tiles.cost)} delta={delta(tiles.cost, prior.cost)} upIsBad />
         <Tile label="Commits" value={num(tiles.commits)} sub={scope === 'mine' ? 'yours + agent' : 'all authors'} delta={delta(tiles.commits, prior.commits)} />
         <Tile label="Cost per commit" value={tiles.cost_per_commit === null ? '—' : usd(tiles.cost_per_commit)} delta={delta(tiles.cost_per_commit ?? 0, prior.cost_per_commit ?? 0)} upIsBad />

@@ -7,14 +7,14 @@ const VALIDATE = import.meta.env.DEV || import.meta.env.MODE === 'test';
 export const WorkStatus = z.object({ enabled: z.boolean(), last_scan_at: z.string().nullable(), repos: z.number(), errors: z.record(z.string()) });
 const Project = z.object({
   id: z.number(), display_name: z.string(), root: z.string(), present: z.boolean(), last_error: z.string().nullable(),
-  active_ms_30d: z.number(), commits_30d: z.number(), daily_active_ms: z.array(z.number()), last_worked_at: z.string().nullable(),
+  active_ms_30d: z.number(), active_estimated: z.boolean(), commits_30d: z.number(), daily_active_ms: z.array(z.number()), last_worked_at: z.string().nullable(),
 });
 export const WorkProjects = z.object({ projects: z.array(Project) });
-const Tiles = z.object({ active_ms: z.number(), cost: z.number(), commits: z.number(), cost_per_commit: z.number().nullable() });
+const Tiles = z.object({ active_ms: z.number(), active_estimated: z.boolean(), cost: z.number(), commits: z.number(), cost_per_commit: z.number().nullable() });
 const Named = z.object({ name: z.string(), value: z.number() });
 export const Story = z.object({
   title: z.string(), branch: z.string().nullable(), prs: z.array(z.number()), sessions: z.number(), session_ids: z.array(z.string()),
-  active_ms: z.number(), cost: z.number(), first_ts: z.string(), last_ts: z.string(),
+  active_ms: z.number(), active_estimated: z.boolean(), cost: z.number(), first_ts: z.string(), last_ts: z.string(),
   commits: z.object({ total: z.number(), exact: z.number(), coauthored: z.number(), inferred: z.number() }),
   added: z.number(), deleted: z.number(), files: z.number(), skills: z.array(z.string()),
 });
@@ -28,7 +28,7 @@ const Evidence = z.enum(['exact', 'coauthored', 'inferred']);
 const NestedCommit = z.object({ sha: z.string(), evidence: Evidence, added: z.number(), deleted: z.number(), files: z.number(), subject: z.string(), author_name: z.string() });
 const SessionItem = z.object({
   kind: z.literal('session'), session_id: z.string(), title: z.string().nullable(), branch: z.string().nullable(), first_ts: z.string(), last_ts: z.string(),
-  active_ms: z.number(), cost: z.number(), turns: z.number(), model: z.string().nullable(), tool_errors: z.number(), commits: z.array(NestedCommit), sort_ts: z.string(),
+  active_ms: z.number(), active_estimated: z.boolean(), cost: z.number(), turns: z.number(), model: z.string().nullable(), tool_errors: z.number(), commits: z.array(NestedCommit), sort_ts: z.string(),
 });
 const CommitItem = z.object({
   kind: z.literal('commit'), sha: z.string(), subject: z.string(), author_name: z.string(), authored_at: z.string(),

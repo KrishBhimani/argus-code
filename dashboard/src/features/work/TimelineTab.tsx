@@ -58,7 +58,7 @@ export default function TimelineTab({ repo }: { repo: number }) {
                   {it.branch && <span className="font-mono text-[10px] text-ink-2">{it.branch}</span>}
                 </div>
                 <div className="text-[11px] text-ink-2">
-                  {time(it.first_ts)}–{time(it.last_ts)} · {hours(it.active_ms)} active · {usd(it.cost)} · {it.model ?? '—'} · {num(it.turns)} turns
+                  {time(it.first_ts)}–{time(it.last_ts)} · {hours(it.active_ms, it.active_estimated)} active · {usd(it.cost)} · {it.model ?? '—'} · {num(it.turns)} turns
                   {it.tool_errors > 0 && ` · ${it.tool_errors} tool errors`} ·{' '}
                   <Link to="/sessions/$id" params={{ id: it.session_id }} search={{ tab: 'overview' }}>open session →</Link>
                 </div>

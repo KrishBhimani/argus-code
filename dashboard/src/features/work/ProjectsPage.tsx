@@ -40,7 +40,7 @@ export default function ProjectsPage() {
                         {!p.present && <span className="ml-2 text-[10px] px-1.5 rounded-sm border border-line-2 text-ink-2 font-sans">repo gone · archived</span>}
                         {p.last_error && <span className="ml-2 text-[10px] text-warn font-sans" title={p.last_error}>scan warning</span>}
                       </td>
-                      <td className="px-3.5 text-right font-mono num">{hours(p.active_ms_30d)}</td>
+                      <td className="px-3.5 text-right font-mono num">{hours(p.active_ms_30d, p.active_estimated)}</td>
                       <td className="px-3.5 text-right font-mono num">{num(p.commits_30d)}</td>
                       <td className="px-3.5"><Sparkline values={p.daily_active_ms} width={120} height={22} /></td>
                       <td className="px-3.5 text-right text-ink-1">{p.last_worked_at ? ago(p.last_worked_at) : '—'}</td>
