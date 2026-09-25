@@ -100,7 +100,7 @@ class WorkCollector:
         while not self._stop.is_set():
             try:
                 r = run_pass(self._data_dir, self._adapter)
-                logger.info("work: scanned %d repos, %d commits, links %s", r.repos, r.commits, r.links)
+                logger.info("work: scanned %d repos, %d new commits, links (total) %s", r.repos, r.commits, r.links)
             except Exception:  # noqa: BLE001  never take argus start down
                 logger.exception("work: pass failed")
             self._stop.wait(self._interval)

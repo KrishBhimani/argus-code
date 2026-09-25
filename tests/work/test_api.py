@@ -45,3 +45,20 @@ def test_routes_when_trial_on(tmp_path):
     assert c.get("/api/work/projects/999/overview").status_code == 404
     assert c.get("/api/work/projects/1/overview?tz=9999").status_code == 400
     assert c.get("/api/work/projects/1/timeline?kind=bogus").status_code == 400
+
+
+def test_period_reaches_back_to_the_first_activity(tmp_path):
+    """The default window is 30 days; `days=0` must reach the project's first commit or session."""
+    conn = _world(tmp_path)
+    conn.execute("INSERT INTO commits VALUES (1, 'old0001', 'Me', 'me@x', '2026-05-02T10:00:00Z', '2026-05-02T10:00:00Z', 'chore: scaffold', 1, 0, 3, 0, 1)")
+    conn.commit()
+    conn.close()
+    c = _client(tmp_path, work=True)
+    to = "to=2026-09-25T00:00:00Z"
+    shas = lambda t: {i.get("sha") for d in t["days"] for i in d["items"]}  # noqa: E731
+    assert "old0001" not in shas(c.get(f"/api/work/projects/1/timeline?{to}").json())
+    assert "old0001" in shas(c.get(f"/api/work/projects/1/timeline?{to}&days=0").json())
+    assert "old0001" in shas(c.get(f"/api/work/projects/1/timeline?to=2026-09-25T00:00:00Z&days=200").json())
+    o = c.get(f"/api/work/projects/1/overview?{to}&days=0").json()
+    assert o["daily"]["days"][0] == "2026-05-02" and o["tiles"]["commits"] == 2
+    assert c.get(f"/api/work/projects/1/overview?{to}&days=-1").status_code == 400

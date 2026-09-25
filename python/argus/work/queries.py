@@ -32,6 +32,17 @@ def _days(frm: str, to: str, tz: int) -> list[str]:
     return out
 
 
+def first_activity(conn: sqlite3.Connection, repo_id: int) -> str | None:
+    """Earliest commit or active span of a project: where an all-time range starts."""
+    r = conn.execute(
+        """SELECT MIN(ts) FROM (
+             SELECT MIN(authored_at) AS ts FROM commits WHERE repo_id = ?
+             UNION ALL
+             SELECT MIN(a.ts) FROM active_spans a JOIN session_repo s ON s.session_id = a.session_id WHERE s.repo_id = ?)""",
+        (repo_id, repo_id)).fetchone()
+    return r[0]
+
+
 def _sessions(conn: sqlite3.Connection, repo_id: int) -> list[str]:
     return [r["session_id"] for r in conn.execute("SELECT session_id FROM session_repo WHERE repo_id = ?", (repo_id,))]
 

@@ -6,6 +6,7 @@ import { ErrorPanel } from '@/components/ui/ErrorPanel';
 import { num, usd } from '@/lib/format/format';
 import { useWorkTimeline, type Scope } from './api';
 import { hours } from './fmt';
+import { periodLabel } from './PeriodChips';
 
 const BADGE: Record<string, string> = {
   exact: 'bg-s3/20 text-[#5fd3a6]', coauthored: 'bg-s1/20 text-[#8ab8ff]', inferred: 'bg-bg-3 text-ink-1',
@@ -25,11 +26,11 @@ function CommitRow({ c, nested }: { c: { sha: string; subject: string; evidence:
   );
 }
 
-export default function TimelineTab({ repo }: { repo: number }) {
+export default function TimelineTab({ repo, days = 30 }: { repo: number; days?: number }) {
   const [kind, setKind] = useState<'all' | 'sessions' | 'commits'>('all');
   const [scope, setScope] = useState<Scope>('mine');
   const [branch, setBranch] = useState<string | undefined>(undefined);
-  const q = useWorkTimeline(repo, {}, { kind, scope, branch });
+  const q = useWorkTimeline(repo, { days }, { kind, scope, branch });
   const branches = [...new Set((q.data?.days ?? []).flatMap((d) => d.items.flatMap((i) => (i.kind === 'session' && i.branch ? [i.branch] : []))))].sort();
   if (q.error) return <ErrorPanel error={q.error} />;
   return (
@@ -45,7 +46,7 @@ export default function TimelineTab({ repo }: { repo: number }) {
         {branch ? <Chip active onClick={() => setBranch(undefined)}>branch: {branch} ✕</Chip>
           : branches.map((b) => <Chip key={b} onClick={() => setBranch(b)}>{b}</Chip>)}
       </div>
-      {q.data && q.data.days.length === 0 && <EmptyState title="Nothing in the last 30 days" />}
+      {q.data && q.data.days.length === 0 && <EmptyState title={`Nothing in ${periodLabel(days)}`} />}
       {q.data?.days.map((d) => (
         <section key={d.day}>
           <div className="text-[10px] tracking-[0.08em] text-ink-2 mb-1">{new Date(`${d.day}T12:00:00`).toDateString().toUpperCase()}</div>

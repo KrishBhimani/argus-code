@@ -11,6 +11,7 @@ from . import queries
 from .db import get_meta, open_work_db
 
 TZ = Query(0, ge=-14 * 60, le=14 * 60)
+DAYS = Query(30, ge=0, le=3660)  # 0 = all time
 
 
 def _now() -> datetime:
@@ -25,10 +26,13 @@ def build_work_router(data_dir: Path) -> APIRouter:
     r = APIRouter(prefix="/api/work")
     conn = open_work_db(data_dir)
 
-    def _range(frm: str | None, to: str | None) -> tuple[str, str]:
+    def _range(repo_id: int, frm: str | None, to: str | None, days: int) -> tuple[str, str]:
+        """Explicit from/to win; otherwise the last `days` days, or everything since the first activity when 0."""
         end = to or _iso(_now())
-        start = frm or _iso(datetime.fromisoformat(end.replace("Z", "+00:00")) - timedelta(days=30))
-        return start, end
+        if frm:
+            return frm, end
+        first = queries.first_activity(conn, repo_id) if days == 0 else None
+        return first or _iso(datetime.fromisoformat(end.replace("Z", "+00:00")) - timedelta(days=days or 30)), end
 
     def _repo(repo_id: int) -> None:
         if conn.execute("SELECT 1 FROM repos WHERE id = ?", (repo_id,)).fetchone() is None:
@@ -49,15 +53,15 @@ def build_work_router(data_dir: Path) -> APIRouter:
 
     @r.get("/projects/{repo_id}/overview")
     def overview(repo_id: int, from_: str | None = Query(None, alias="from"), to: str | None = None,
-                 scope: Literal["mine", "all"] = "mine", tz: int = TZ) -> dict:
+                 scope: Literal["mine", "all"] = "mine", tz: int = TZ, days: int = DAYS) -> dict:
         _repo(repo_id)
-        return queries.overview(conn, repo_id, *_range(from_, to), scope=scope, tz=tz)
+        return queries.overview(conn, repo_id, *_range(repo_id, from_, to, days), scope=scope, tz=tz)
 
     @r.get("/projects/{repo_id}/timeline")
     def timeline(repo_id: int, from_: str | None = Query(None, alias="from"), to: str | None = None,
                  kind: Literal["all", "sessions", "commits"] = "all", branch: str | None = None,
-                 scope: Literal["mine", "all"] = "mine", tz: int = TZ) -> dict:
+                 scope: Literal["mine", "all"] = "mine", tz: int = TZ, days: int = DAYS) -> dict:
         _repo(repo_id)
-        return queries.timeline(conn, repo_id, *_range(from_, to), kind=kind, branch=branch, scope=scope, tz=tz)
+        return queries.timeline(conn, repo_id, *_range(repo_id, from_, to, days), kind=kind, branch=branch, scope=scope, tz=tz)
 
     return r

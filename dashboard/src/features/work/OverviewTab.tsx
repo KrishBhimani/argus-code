@@ -14,6 +14,16 @@ import { useWorkOverview, type Scope, type StoryT } from './api';
 import { DayColumns, type Sel } from './DayColumns';
 import { hours } from './fmt';
 import { selRange } from './range';
+import { periodLabel } from './PeriodChips';
+
+function ChartLabel({ name, peak }: { name: string; peak: string }) {
+  return (
+    <div className="flex items-baseline justify-between text-[10px] text-ink-2">
+      <span className="tracking-[0.08em] uppercase">{name}</span>
+      <span>peak {peak}</span>
+    </div>
+  );
+}
 
 function StoryCard({ s, repo }: { s: StoryT; repo: number }) {
   const ev = [s.commits.exact && `${s.commits.exact} exact`, s.commits.coauthored && `${s.commits.coauthored} co-authored`, s.commits.inferred && `${s.commits.inferred} inferred`].filter(Boolean).join(' · ');
@@ -35,11 +45,11 @@ function StoryCard({ s, repo }: { s: StoryT; repo: number }) {
   );
 }
 
-export default function OverviewTab({ repo, scope = 'mine' }: { repo: number; scope?: Scope }) {
+export default function OverviewTab({ repo, scope = 'mine', days: period = 30 }: { repo: number; scope?: Scope; days?: number }) {
   const [sel, setSel] = useState<Sel>(null);
   const [branch, setBranch] = useState<string | null>(null);
   const [skill, setSkill] = useState<string | null>(null);
-  const base = useWorkOverview(repo, {}, scope);
+  const base = useWorkOverview(repo, { days: period }, scope);
   const days = base.data?.daily.days ?? [];
   const range = useMemo(() => selRange(days, sel, tzOffsetMin()), [days, sel]);
   const focused = useWorkOverview(repo, range, scope);
@@ -47,24 +57,27 @@ export default function OverviewTab({ repo, scope = 'mine' }: { repo: number; sc
   if (base.error) return <ErrorPanel error={base.error} />;
   if (!base.data) return null;
   const { tiles, prior, daily } = base.data;
+  // All time has no earlier period to compare with.
+  const vs = (cur: number, prev: number) => (period === 0 ? null : delta(cur, prev));
   const stories = (detail?.stories ?? []).filter((s) => (!branch || s.branch === branch) && (!skill || s.skills.includes(skill)));
   const table = { columns: ['Day', 'Active', 'Commits'], rows: daily.days.map((d, i) => [d, hours(daily.active_ms[i]), daily.commits[i]]) };
-  const label = sel ? `${daily.days[sel.a]} – ${daily.days[sel.b]}` : 'last 30 days';
+  const label = sel ? `${daily.days[sel.a]} – ${daily.days[sel.b]}` : periodLabel(period);
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-4 gap-3">
-        <Tile label="Active time" value={hours(tiles.active_ms, tiles.active_estimated)} sub="Claude working, not wall clock" delta={delta(tiles.active_ms, prior.active_ms)} />
-        <Tile label="Est. cost" value={usd(tiles.cost)} delta={delta(tiles.cost, prior.cost)} upIsBad />
-        <Tile label="Commits" value={num(tiles.commits)} sub={scope === 'mine' ? 'yours + agent' : 'all authors'} delta={delta(tiles.commits, prior.commits)} />
-        <Tile label="Cost per commit" value={tiles.cost_per_commit === null ? '—' : usd(tiles.cost_per_commit)} delta={delta(tiles.cost_per_commit ?? 0, prior.cost_per_commit ?? 0)} upIsBad />
+        <Tile label="Active time" value={hours(tiles.active_ms, tiles.active_estimated)} sub="Claude working, not wall clock" delta={vs(tiles.active_ms, prior.active_ms)} />
+        <Tile label="Est. cost" value={usd(tiles.cost)} delta={vs(tiles.cost, prior.cost)} upIsBad />
+        <Tile label="Commits" value={num(tiles.commits)} sub={scope === 'mine' ? 'yours + agent' : 'all authors'} delta={vs(tiles.commits, prior.commits)} />
+        <Tile label="Cost per commit" value={tiles.cost_per_commit === null ? '—' : usd(tiles.cost_per_commit)} delta={vs(tiles.cost_per_commit ?? 0, prior.cost_per_commit ?? 0)} upIsBad />
       </div>
       <div className="grid grid-cols-[minmax(0,1fr)_240px] gap-4">
         <div className="flex flex-col gap-4 min-w-0">
-          <Panel title="Active hours · commits by day" sub="click a day or drag a range" right={sel && <Chip active onClick={() => setSel(null)}>{label} ✕</Chip>}>
+          <Panel title="Claude's working time vs commits, by day" sub="click a day or drag a range" right={sel && <Chip active onClick={() => setSel(null)}>{label} ✕</Chip>}>
             <ChartWithTable table={table} chart={
               <div className="flex flex-col gap-2">
+                <ChartLabel name="Claude's working time" peak={hours(Math.max(0, ...daily.active_ms))} />
                 <DayColumns label="Active hours by day" days={daily.days} values={daily.active_ms} format={(v) => hours(v)} sel={sel} onSel={setSel} />
-                <div className="text-[10px] text-ink-2">COMMITS</div>
+                <ChartLabel name="Commits landed" peak={num(Math.max(0, ...daily.commits))} />
                 <DayColumns label="Commits by day" days={daily.days} values={daily.commits} format={(v) => `${v} commits`} sel={sel} onSel={setSel} height={40} />
               </div>
             } />

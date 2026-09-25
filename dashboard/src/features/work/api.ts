@@ -41,7 +41,7 @@ export type WorkOverviewT = z.infer<typeof WorkOverview>;
 export type StoryT = z.infer<typeof Story>;
 export type WorkTimelineT = z.infer<typeof WorkTimeline>;
 export type Scope = 'mine' | 'all';
-export type Range = { from?: string; to?: string };
+export type Range = { from?: string; to?: string; days?: number };
 
 async function get<T>(path: string, schema: z.ZodType<T, z.ZodTypeDef, unknown>): Promise<T> {
   const r = await fetch(path, { headers: { Accept: 'application/json' } });
@@ -67,6 +67,6 @@ export const useWorkStatus = () => {
 };
 export const useWorkProjects = () => useQuery({ queryKey: ['work', 'projects', tzOffsetMin()], queryFn: workApi.projects });
 export const useWorkOverview = (repo: number, r: Range, scope: Scope) =>
-  useQuery({ queryKey: ['work', 'overview', repo, r.from, r.to, scope, tzOffsetMin()], queryFn: () => workApi.overview(repo, r, scope) });
+  useQuery({ queryKey: ['work', 'overview', repo, r.from, r.to, r.days, scope, tzOffsetMin()], queryFn: () => workApi.overview(repo, r, scope) });
 export const useWorkTimeline = (repo: number, r: Range, f: { kind: string; branch?: string; scope: Scope }) =>
-  useQuery({ queryKey: ['work', 'timeline', repo, r.from, r.to, f.kind, f.branch, f.scope, tzOffsetMin()], queryFn: () => workApi.timeline(repo, r, f) });
+  useQuery({ queryKey: ['work', 'timeline', repo, r.from, r.to, r.days, f.kind, f.branch, f.scope, tzOffsetMin()], queryFn: () => workApi.timeline(repo, r, f) });

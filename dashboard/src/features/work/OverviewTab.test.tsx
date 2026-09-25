@@ -41,3 +41,23 @@ it('marks estimated active time with ≈ (spec §5)', () => {
   expect(screen.getByText('≈41h')).toBeInTheDocument();
   base.tiles = saved;
 });
+
+it('labels both day charts in plain words with their peak, and names the period', () => {
+  render(<OverviewTab repo={1} days={90} />);
+  expect(screen.getByText("Claude's working time")).toBeInTheDocument();
+  expect(screen.getByText('peak 2h')).toBeInTheDocument();
+  expect(screen.getByText('Commits landed')).toBeInTheDocument();
+  expect(screen.getByText('peak 4')).toBeInTheDocument();
+  expect(screen.getByText(/WORK · LAST 90 DAYS/)).toBeInTheDocument();
+});
+
+it('shows no vs-prior deltas for all time (there is no earlier period)', () => {
+  const tiles = (days?: number) => {
+    const { container, unmount } = render(<OverviewTab repo={1} days={days} />);
+    const text = container.querySelector('.grid-cols-4')!.textContent!;
+    unmount();
+    return text;
+  };
+  expect(tiles(30)).toMatch(/%/);
+  expect(tiles(0)).not.toMatch(/%/);
+});

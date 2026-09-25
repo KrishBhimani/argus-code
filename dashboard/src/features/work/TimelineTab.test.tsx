@@ -2,9 +2,11 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import TimelineTab from './TimelineTab';
 
 const calls: unknown[] = [];
+const ranges: unknown[] = [];
 vi.mock('./api', () => ({
-  useWorkTimeline: (_r: number, _range: unknown, f: unknown) => {
+  useWorkTimeline: (_r: number, range: unknown, f: unknown) => {
     calls.push(f);
+    ranges.push(range);
     return { data: { days: [{ day: '2026-09-21', items: [
       { kind: 'session', session_id: 'claude_code:A', title: 'Composio connectors', branch: 'feat/composio', first_ts: '2026-09-21T08:32:00Z', last_ts: '2026-09-21T11:10:00Z',
         active_ms: 6_840_000, cost: 71, turns: 38, model: 'claude-opus-5', tool_errors: 2, sort_ts: '2026-09-21T08:32:00Z',
@@ -32,4 +34,9 @@ it('filter chips change the query', () => {
   expect(calls.at(-1)).toMatchObject({ scope: 'all' });
   fireEvent.click(screen.getByRole('button', { name: 'feat/composio' }));
   expect(calls.at(-1)).toMatchObject({ branch: 'feat/composio' });
+});
+
+it('asks for the chosen period (0 = all time)', () => {
+  render(<TimelineTab repo={1} days={0} />);
+  expect(ranges.at(-1)).toEqual({ days: 0 });
 });
