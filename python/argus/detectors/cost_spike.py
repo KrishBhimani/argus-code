@@ -1,7 +1,7 @@
 """cost_spike detector.
 
 For each project, compares the trailing-7-day estimated cost (`window`)
-against the weekly average of the 28 days immediately before that
+against the weekly average of the up-to-28 days immediately before that
 (`baseline`). Fires a finding when:
 
   - window_cost >= 2 * baseline_weekly_cost
@@ -14,10 +14,13 @@ thing wherever it shows up.
 
 Two deliberate calls:
 
-- **No zero-baseline case.** A project with no spend in the baseline is
-  usually a project that simply started this week; "new work costs money"
-  is not a behaviour change worth an alert. The ratio path needs a real
-  baseline, so a project must have been active before it can spike.
+- **The baseline covers only the weeks the project existed.** A project
+  started 10 days ago has 3 days of baseline, not 28; dividing its spend by
+  4 weeks made a steady project look like a 9x spike in its second week (on
+  a real archive, 77 of 137 backtested alerts). So the weekly baseline is
+  spend / active weeks (from the project's first turn, capped at 4), and a
+  project with less than one week of history is skipped: "new work costs
+  money" is not a behaviour change worth an alert.
 - **The dollar floors are absolute, not relative.** Cost is an estimate
   from the bundled price table, and it is meaningless as *money* for
   Pro/Max users who pay a flat fee — but it still tracks how much work
@@ -27,6 +30,8 @@ Two deliberate calls:
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+
+from datetime import datetime
 
 from .base import Finding, iso_at_offset, project_label
 from .registry import register
@@ -41,7 +46,12 @@ _MIN_WINDOW_COST = 5.0
 _MIN_BASELINE_WEEKLY_COST = 1.0
 _WARNING_MULTIPLE = 2.0
 _CRITICAL_MULTIPLE = 5.0
-_BASELINE_WEEKS = _BASELINE_DAYS / _WINDOW_DAYS
+_MIN_BASELINE_DAYS = 7  # at least a week of history before the window
+
+
+def _days_between(start_iso: str, end_iso: str) -> float:
+    p = lambda s: datetime.fromisoformat(s.replace("Z", "+00:00"))  # noqa: E731
+    return (p(end_iso) - p(start_iso)).total_seconds() / 86_400
 
 
 @register
@@ -59,6 +69,7 @@ class CostSpikeDetector:
             start_iso=baseline_start, end_iso=window_start
         )
         baseline_by_project = {r["project_path"]: r for r in baseline_rows}
+        first_turns = repo.project_first_turns(before_iso=window_start)
 
         findings: list[Finding] = []
         for w in window_rows:
@@ -71,9 +82,13 @@ class CostSpikeDetector:
             if b is None:
                 continue
             baseline_cost = float(b["cost"])
-            # The baseline is four times as long as the window, so compare
-            # like with like: spend per week, not spend per window.
-            baseline_weekly = baseline_cost / _BASELINE_WEEKS
+            # Compare like with like: spend per week, over the part of the
+            # baseline the project actually existed for.
+            active_from = max(baseline_start, first_turns.get(project, baseline_start))
+            baseline_days = _days_between(active_from, window_start)
+            if baseline_days < _MIN_BASELINE_DAYS:
+                continue
+            baseline_weekly = baseline_cost / (baseline_days / 7)
             if baseline_weekly < _MIN_BASELINE_WEEKLY_COST:
                 continue
 
@@ -94,7 +109,7 @@ class CostSpikeDetector:
                     ),
                     message=(
                         f"Last 7d: ${window_cost:,.2f} over "
-                        f"{int(w['turns']):,} turns. Prior 28d: "
+                        f"{int(w['turns']):,} turns. Prior {round(baseline_days)}d: "
                         f"${baseline_weekly:,.2f}/week over "
                         f"{int(b['turns']):,} turns."
                     ),
@@ -106,6 +121,7 @@ class CostSpikeDetector:
                         "window_turns": int(w["turns"]),
                         "baseline_turns": int(b["turns"]),
                         "multiple": multiple,
+                        "baseline_days": round(baseline_days),
                     },
                 )
             )

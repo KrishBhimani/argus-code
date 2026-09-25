@@ -25,8 +25,15 @@ def _seed(
     turns: int,
     cost: float,
     sid: str | None = None,
+    established: bool = True,
 ) -> str:
-    """One synthetic session in `project` with `turns` turns of `cost` each."""
+    """One synthetic session in `project` with `turns` turns of `cost` each.
+
+    ``established`` (baseline seeds only) adds a $0 turn 40 days back, before
+    the baseline starts, so the project has a full 4-week history and the
+    baseline is its spend / 4 weeks. Pass False for a project that is younger
+    than the baseline window.
+    """
     sid = sid or f"claude_code:{project.strip('/').replace('/', '_')}-{days_ago}"
     repo.upsert_session(
         session_factory(sid, _ts(days_ago), project_path=project)
@@ -35,6 +42,8 @@ def _seed(
         repo.upsert_turn(
             turn_factory(f"{sid}:{i}", sid, _ts(days_ago), cost=cost, output=0)
         )
+    if established and days_ago > 7:
+        repo.upsert_turn(turn_factory(f"{sid}:origin", sid, _ts(40), cost=0.0, output=0))
     return sid
 
 
@@ -147,3 +156,36 @@ def test_detector_is_pure_no_writes(repo, detector):
     _seed(repo, "/a", days_ago=20, turns=10, cost=6.0)
     detector.detect(repo, NOW)
     assert repo.list_alerts(limit=10) == []
+
+
+# ─── Review follow-up: a baseline the project only partly existed for ─────
+
+
+def test_project_younger_than_the_baseline_is_measured_over_its_own_weeks(repo, detector):
+    """REGRESSION: the baseline was spend / 4 weeks even for a project that
+    existed for only part of those 4 weeks. A steady $10/day project in its
+    second week read as $30/4 = $7.50/wk and fired a critical "9.3x" spike.
+    On a real archive 77 of 137 backtested alerts were this artifact."""
+    for d in range(1, 11):  # $10/day, every day for the last 10 days
+        _seed(repo, "/new", days_ago=d, turns=1, cost=10.0, established=False)
+    assert detector.detect(repo, NOW) == []
+
+
+def test_project_with_less_than_a_week_of_history_is_skipped(repo, detector):
+    """Two days of baseline is too thin to call anything a spike."""
+    _seed(repo, "/thin", days_ago=8, turns=1, cost=20.0, established=False)  # flat /4: $5/wk -> "20x"
+    _seed(repo, "/thin", days_ago=2, turns=10, cost=10.0)
+    assert detector.detect(repo, NOW) == []
+
+
+def test_young_project_spike_uses_its_active_weeks(repo, detector):
+    """Three weeks of $30/wk, then $210 this week: 7x of its own weekly rate
+    (a flat /4 would have said 9.3x)."""
+    _seed(repo, "/mid", days_ago=28, turns=1, cost=0.0, established=False)  # born 28d ago
+    _seed(repo, "/mid", days_ago=20, turns=9, cost=10.0, established=False)  # $90 over 3 weeks
+    _seed(repo, "/mid", days_ago=2, turns=21, cost=10.0)                      # $210
+    (f,) = detector.detect(repo, NOW)
+    assert f.severity == "critical"
+    assert abs(f.metadata["multiple"] - 7.0) < 1e-9
+    assert f.metadata["baseline_days"] == 21
+    assert "Prior 21d" in f.message

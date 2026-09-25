@@ -186,8 +186,12 @@ gate on a volume floor so a quiet week can't fire:
 
 Notes that shape those rules:
 
-- **The baseline is four weeks long, so cost is compared per week**, not per
-  window — otherwise every project looks cheaper than its own history.
+- **The baseline is up to four weeks long, so cost is compared per week**, not
+  per window — otherwise every project looks cheaper than its own history. The
+  weeks are the ones the project **existed** for (from its first turn, capped
+  at 4), and a project with under a week of history is skipped: dividing a
+  10-day-old project's spend by 4 weeks made steady work read as a 9x spike
+  (77 of 137 alerts in a 100-day backtest on a real archive).
 - **Cost was deliberately not the v1 signal:** it's meaningless as *money* for
   Pro/Max users who don't pay per token. It survives as a v2 signal because it
   still tracks how much work the agent did; the absolute dollar floors keep

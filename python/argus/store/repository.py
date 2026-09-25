@@ -768,6 +768,25 @@ class Repository:
         ).fetchone()
         return {"tokens": row["tokens"], "cost_usd": row["cost_usd"], "sessions": row["sessions"]}
 
+    def project_first_turns(self, *, before_iso: str) -> dict[str, str]:
+        """Earliest turn timestamp per project among turns before ``before_iso``
+        (sub-agent turns count for their parent's project). Lets a detector
+        tell how much of its baseline a project actually existed for."""
+        rows = self.db.execute(
+            """
+            SELECT s.project_path AS project_path, MIN(t.timestamp) AS first_ts
+            FROM turns t
+            JOIN sessions s ON s.id = CASE
+                WHEN instr(t.session_id, '/') > 0
+                THEN substr(t.session_id, 1, instr(t.session_id, '/') - 1)
+                ELSE t.session_id END
+            WHERE t.timestamp < ?
+            GROUP BY s.project_path
+            """,
+            (before_iso,),
+        ).fetchall()
+        return {r["project_path"]: r["first_ts"] for r in rows}
+
     def project_turn_stats_in_range(
         self, *, start_iso: str, end_iso: str
     ) -> list[dict[str, Any]]:
