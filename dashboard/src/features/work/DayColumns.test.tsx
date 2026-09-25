@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { createEvent, fireEvent, render, screen } from '@testing-library/react';
 import { DayColumns, normSel } from './DayColumns';
 
 const days = ['2026-09-01', '2026-09-02', '2026-09-03', '2026-09-04'];
@@ -37,12 +37,24 @@ it('a drag previews the range but commits it once, on release (one query, not on
   expect(onSel).toHaveBeenCalledWith({ a: 0, b: 3 });
 });
 
-it('leaving the chart mid-drag cancels the preview', () => {
+it('releasing outside the chart keeps the dragged range', () => {
   const onSel = vi.fn();
   const { container } = render(<DayColumns label="Active hours" days={days} values={[1, 2, 0, 4]} format={String} sel={null} onSel={onSel} />);
   const cols = screen.getAllByTestId('daycol');
   fireEvent.pointerDown(cols[0]); fireEvent.pointerEnter(cols[2]);
   fireEvent.pointerLeave(container.querySelector('svg')!);
-  expect(cols[1]).toHaveAttribute('data-selected', 'false');
-  expect(onSel).not.toHaveBeenCalled();
+  fireEvent.pointerUp(window);
+  expect(onSel).toHaveBeenCalledTimes(1);
+  expect(onSel).toHaveBeenCalledWith({ a: 0, b: 2 });
+});
+
+it('clicking and double-clicking the chart never selects the surrounding text', () => {
+  const { container } = render(<DayColumns label="Active hours" days={days} values={[1, 2, 0, 4]} format={String} sel={null} onSel={() => {}} />);
+  const svg = container.querySelector('svg')!;
+  const down = createEvent.mouseDown(svg);
+  fireEvent(svg, down);
+  expect(down.defaultPrevented).toBe(true);
+  const dbl = createEvent.dblClick(svg);
+  fireEvent(svg, dbl);
+  expect(dbl.defaultPrevented).toBe(true);
 });

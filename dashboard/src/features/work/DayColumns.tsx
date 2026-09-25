@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export type Sel = { a: number; b: number } | null;
 export const normSel = (a: number, b: number) => ({ a: Math.min(a, b), b: Math.max(a, b) });
@@ -10,7 +10,11 @@ export function DayColumns({ days, values, format, sel, onSel, height = 64, labe
   // A drag is previewed locally and committed once on release: committing on every
   // column crossed fired one API query per day, which queued up behind each other.
   const drag = useRef<number | null>(null);
-  const [preview, setPreview] = useState<Sel>(null);
+  const [preview, setPreviewState] = useState<Sel>(null);
+  const previewRef = useRef<Sel>(null);
+  const setPreview = (s: Sel) => { previewRef.current = s; setPreviewState(s); };
+  const onSelRef = useRef(onSel);
+  onSelRef.current = onSel;
   const shown = preview ?? sel;
   const max = Math.max(1, ...values);
   const w = 100 / Math.max(1, days.length);
@@ -19,9 +23,22 @@ export function DayColumns({ days, values, format, sel, onSel, height = 64, labe
     drag.current = null;
     setPreview(null);
   };
+  // Releasing anywhere (off the chart included) keeps the range dragged so far.
+  useEffect(() => {
+    const up = () => {
+      if (drag.current !== null && previewRef.current) onSelRef.current(previewRef.current);
+      drag.current = null;
+      if (previewRef.current) setPreview(null);
+    };
+    window.addEventListener('pointerup', up);
+    return () => window.removeEventListener('pointerup', up);
+  }, []);
+  // Block the browser's text selection, which a click, drag or double-click
+  // on the chart otherwise starts on the words around it.
+  const noTextSelect = (e: { preventDefault: () => void }) => e.preventDefault();
   return (
     <svg role="img" aria-label={label} viewBox={`0 0 100 ${height}`} preserveAspectRatio="none" className="w-full select-none touch-none" style={{ height }}
-      onPointerLeave={() => { drag.current = null; setPreview(null); }}>
+      onMouseDown={noTextSelect} onDoubleClick={noTextSelect}>
       {days.map((d, i) => {
         const on = shown !== null && i >= shown.a && i <= shown.b;
         const h = (values[i] / max) * (height - 2);
