@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import threading
-import time
 
 import pytest
 
@@ -18,10 +17,12 @@ class _FakeRuntime:
         self.stopped = False
         self.require_adapters = None
         self.activate_calls = 0
+        self.started_event = threading.Event()
 
     def start(self, *, require_adapters: bool = True):
-        self.started = True
         self.require_adapters = require_adapters
+        self.started = True
+        self.started_event.set()
 
     def try_activate(self) -> bool:
         self.activate_calls += 1
@@ -44,11 +45,12 @@ def test_run_foreground_writes_pid_runs_and_cleans_up(tmp_path, monkeypatch):
     )
     t.start()
 
-    # Wait for the PID file to appear.
-    for _ in range(100):
-        if pidfile.read(tmp_path) is not None:
-            break
-        time.sleep(0.01)
+    # Wait for the thing asserted on — the runtime having started — not a proxy.
+    # run_foreground writes the PID file *before* runtime.start(), so polling
+    # for the file and then asserting `started` raced on slow CI runners
+    # (failed on macOS py3.11). Generous budget: a claim about correctness,
+    # not machine speed (tests/AGENTS.md).
+    assert fake.started_event.wait(10), "runtime.start() was never called"
     assert pidfile.read(tmp_path) is not None
     assert fake.started is True
     # The daemon must tolerate a missing ~/.claude rather than exiting (issue #11).
