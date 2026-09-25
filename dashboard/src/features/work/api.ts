@@ -18,11 +18,14 @@ export const Story = z.object({
   title: z.string(), branch: z.string().nullable(), prs: z.array(z.number()), sessions: z.number(), session_ids: z.array(z.string()),
   active_ms: z.number(), active_estimated: z.boolean(), cost: z.number(), first_ts: z.string(), last_ts: z.string(),
   commits: z.object({ total: z.number(), exact: z.number(), coauthored: z.number(), inferred: z.number() }),
-  added: z.number(), deleted: z.number(), files: z.number(), skills: z.array(z.string()),
+  added: z.number(), deleted: z.number(), files: z.number(), skills: z.array(z.string()), output_tokens: z.number(),
 });
 export const WorkOverview = z.object({
   tiles: Tiles, prior: Tiles,
-  daily: z.object({ days: z.array(z.string()), active_ms: z.array(z.number()), commits: z.array(z.number()) }),
+  daily: z.object({
+    days: z.array(z.string()), active_ms: z.array(z.number()), commits: z.array(z.number()),
+    output_tokens: z.array(z.number()), cost: z.array(z.number()),
+  }),
   stories: z.array(Story),
   breakdowns: z.object({ branches: z.array(Named), skills: z.array(Named), files: z.array(Named) }),
 });

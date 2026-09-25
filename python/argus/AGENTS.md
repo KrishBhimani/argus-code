@@ -50,6 +50,11 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   credentials stripped) are one project. Queries resolve any folder id to the whole
   group and count each commit sha once, keeping the strongest link. Columns added
   after the first trial build are added in `open_work_db` only when missing.
+  Time comes from one source per session, best first: `measured` (transcript
+  `turn_duration`), `estimated` (transcript gaps), `archive` (argus.db turn gaps, for
+  sessions whose transcript is gone; same 5-min cap). Such sessions are titled from
+  the prompt nearest their start (`title_source = 'prompt'`, placeholders stripped);
+  transcript titles always win. Tokens and cost always come from argus.db turns.
 - `detectors/` — alert detectors: the registry, the shared helpers in `base.py`,
   and one module per rule (`tool_error_rate_spike`, `cost_spike`, `cache_hit_drop`).
 - `pricing/` — pricing table load / refresh / compute; bundled JSON under repo `pricing/`.

@@ -8,13 +8,21 @@ import { ErrorPanel } from '@/components/ui/ErrorPanel';
 import { Bars } from '@/components/charts/Bars';
 import { ChartWithTable } from '@/components/charts/ChartTable';
 import { delta } from '@/lib/analysis/deltas';
-import { num, pct, usd } from '@/lib/format/format';
+import { Seg } from '@/components/ui/Seg';
+import { num, pct, tok, usd } from '@/lib/format/format';
 import { tzOffsetMin } from '@/lib/api/client';
 import { useWorkOverview, type Scope, type StoryT } from './api';
 import { DayColumns, type Sel } from './DayColumns';
 import { hours } from './fmt';
 import { selRange } from './range';
 import { periodLabel } from './PeriodChips';
+
+/** What the top day chart measures. Tokens by default: the archive has them for every
+ *  session, while time needs the transcript (or is estimated from turn gaps). */
+type Metric = 'tokens' | 'cost' | 'time';
+const METRIC_TABS: { value: Metric; label: string }[] = [
+  { value: 'tokens', label: 'Tokens' }, { value: 'cost', label: 'Cost' }, { value: 'time', label: 'Time' },
+];
 
 function ChartLabel({ name, peak }: { name: string; peak: string }) {
   return (
@@ -34,7 +42,7 @@ function StoryCard({ s, repo }: { s: StoryT; repo: number }) {
         {s.branch && <span className="font-mono text-[10px] px-1.5 rounded-full border border-line-2 text-ink-1">{s.branch}</span>}
         {s.prs.map((p) => <span key={p} className="text-[10px] px-1.5 rounded-full border border-line-2 text-ink-1">PR #{p}</span>)}
       </div>
-      <div className="text-[11px] text-ink-2">{s.sessions} session{s.sessions === 1 ? '' : 's'} · {hours(s.active_ms, s.active_estimated)} active · {usd(s.cost)}</div>
+      <div className="text-[11px] text-ink-2">{s.sessions} session{s.sessions === 1 ? '' : 's'} · {tok(s.output_tokens)} tokens · {hours(s.active_ms, s.active_estimated)} active · {usd(s.cost)}</div>
       <div className="text-[11px] text-ink-1">
         {s.commits.total === 0 ? 'no commits: research' : <>
           <span>{num(s.commits.total)} commits</span> <span className="text-ink-2">({ev})</span> · +{num(s.added)} / −{num(s.deleted)} · {num(s.files)} files
@@ -49,6 +57,7 @@ export default function OverviewTab({ repo, scope = 'mine', days: period = 30 }:
   const [sel, setSel] = useState<Sel>(null);
   const [branch, setBranch] = useState<string | null>(null);
   const [skill, setSkill] = useState<string | null>(null);
+  const [metric, setMetric] = useState<Metric>('tokens');
   const base = useWorkOverview(repo, { days: period }, scope);
   const days = base.data?.daily.days ?? [];
   const range = useMemo(() => selRange(days, sel, tzOffsetMin()), [days, sel]);
@@ -61,7 +70,15 @@ export default function OverviewTab({ repo, scope = 'mine', days: period = 30 }:
   // All time has no earlier period to compare with.
   const vs = (cur: number, prev: number) => (period === 0 ? null : delta(cur, prev));
   const stories = (detail?.stories ?? []).filter((s) => (!branch || s.branch === branch) && (!skill || s.skills.includes(skill)));
-  const table = { columns: ['Day', 'Active', 'Commits'], rows: daily.days.map((d, i) => [d, hours(daily.active_ms[i]), daily.commits[i]]) };
+  const table = {
+    columns: ['Day', 'Output tokens', 'Cost', 'Active', 'Commits'],
+    rows: daily.days.map((d, i) => [d, tok(daily.output_tokens[i]), usd(daily.cost[i]), hours(daily.active_ms[i]), daily.commits[i]]),
+  };
+  const m = {
+    tokens: { name: "Claude's output (tokens)", aria: 'Output tokens by day', values: daily.output_tokens, format: (v: number) => tok(v) },
+    cost: { name: 'Cost ($)', aria: 'Cost by day', values: daily.cost, format: (v: number) => usd(v) },
+    time: { name: "Claude's working time", aria: 'Active hours by day', values: daily.active_ms, format: (v: number) => hours(v) },
+  }[metric];
   const label = sel ? `${daily.days[sel.a]} – ${daily.days[sel.b]}` : periodLabel(period);
   return (
     <div className="flex flex-col gap-4">
@@ -73,11 +90,16 @@ export default function OverviewTab({ repo, scope = 'mine', days: period = 30 }:
       </div>
       <div className="grid grid-cols-[minmax(0,1fr)_240px] gap-4">
         <div className="flex flex-col gap-4 min-w-0">
-          <Panel title="Claude's working time vs commits, by day" sub="click a day or drag a range" right={sel && <Chip active onClick={() => setSel(null)}>{label} ✕</Chip>}>
+          <Panel title="Claude's work vs commits, by day" sub="click a day or drag a range" right={
+            <div className="flex items-center gap-2">
+              <Seg options={METRIC_TABS} value={metric} onChange={setMetric} />
+              {sel && <Chip active onClick={() => setSel(null)}>{label} ✕</Chip>}
+            </div>
+          }>
             <ChartWithTable table={table} chart={
               <div className="flex flex-col gap-2">
-                <ChartLabel name="Claude's working time" peak={hours(Math.max(0, ...daily.active_ms))} />
-                <DayColumns label="Active hours by day" days={daily.days} values={daily.active_ms} format={(v) => hours(v)} sel={sel} onSel={setSel} />
+                <ChartLabel name={m.name} peak={m.format(Math.max(0, ...m.values))} />
+                <DayColumns key={metric} label={m.aria} days={daily.days} values={m.values} format={m.format} sel={sel} onSel={setSel} />
                 <ChartLabel name="Commits landed" peak={num(Math.max(0, ...daily.commits))} />
                 <DayColumns label="Commits by day" days={daily.days} values={daily.commits} format={(v) => `${v} commits`} sel={sel} onSel={setSel} height={40} />
               </div>

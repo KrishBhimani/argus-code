@@ -19,6 +19,7 @@ class SessionSummary:
     prs: list[int] = field(default_factory=list)
     commits: list[dict] = field(default_factory=list)
     active_estimated: bool = False
+    output_tokens: int = 0
 
 
 def _t(ts: str) -> float:
@@ -40,6 +41,7 @@ def _story(group: list[SessionSummary]) -> dict:
         "active_ms": sum(s.active_ms for s in group),
         "active_estimated": any(s.active_estimated for s in group),
         "cost": sum(s.cost for s in group),
+        "output_tokens": sum(s.output_tokens for s in group),
         "first_ts": group[0].first_ts,
         "last_ts": max(s.last_ts for s in group),
         "commits": {"total": len(commits), **ev},

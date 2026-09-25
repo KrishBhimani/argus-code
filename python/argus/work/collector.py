@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -10,7 +11,7 @@ from pathlib import Path
 from ..store.repository import normalize_project_path
 from . import gitscan
 from .db import open_work_db, set_meta
-from .facts import collect_facts
+from .facts import GAP_CAP_MS, collect_facts
 from .linker import link_repo
 
 logger = logging.getLogger("argus.work")
@@ -42,6 +43,69 @@ def _seed_archived_sessions(conn) -> None:
     )
 
 
+PROMPT_WINDOW_MS = 120_000   # a session's first prompt is logged within seconds of its start
+
+
+def _ms(ts: str) -> float:
+    return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp() * 1000
+
+
+_PLACEHOLDER = re.compile(r"\[(?:Image|Pasted text) #\d+[^\]]*\]")
+
+
+def _prompt_title(display: str) -> str | None:
+    """A prompt's first words as a title, without Claude Code's [Image #1] / [Pasted text #1] markers."""
+    for line in display.splitlines():
+        text = " ".join(_PLACEHOLDER.sub("", line).split())
+        if text:
+            return text[:120]
+    return None
+
+
+def _fill_from_archive(conn) -> None:
+    """Sessions whose transcript Claude Code deleted still have their turns and your prompts
+    in argus.db (read-only). Estimate their time from turn gaps, capped like transcript gaps,
+    and title them with the prompt that started them. Transcript facts, when present, win."""
+    if not conn.execute("SELECT 1 FROM pragma_database_list WHERE name = 'core'").fetchone():
+        return
+    rows = conn.execute(
+        """SELECT sr.session_id, cs.project_path, cs.started_at FROM session_repo sr
+           JOIN core.sessions cs ON cs.id = sr.session_id
+           WHERE sr.repo_id IS NOT NULL AND instr(sr.session_id, '/') = 0
+             AND NOT EXISTS (SELECT 1 FROM session_facts f
+                             WHERE f.session_id = sr.session_id AND f.last_line_ts IS NOT NULL)""").fetchall()
+    conn.execute("BEGIN")
+    try:
+        for r in rows:
+            sid = r["session_id"]
+            if not conn.execute("SELECT 1 FROM active_spans WHERE session_id = ? LIMIT 1", (sid,)).fetchone():
+                times = [t["timestamp"] for t in conn.execute(
+                    "SELECT timestamp FROM core.turns WHERE session_id = ? ORDER BY timestamp", (sid,))]
+                for prev, ts in zip(times, times[1:]):
+                    gap = _ms(ts) - _ms(prev)
+                    if gap > 0:
+                        conn.execute("INSERT INTO active_spans VALUES (?, ?, ?, 'archive')",
+                                     (sid, ts, int(min(gap, GAP_CAP_MS))))
+            titled = conn.execute("SELECT 1 FROM session_facts WHERE session_id = ? AND title IS NOT NULL", (sid,)).fetchone()
+            if not titled and r["started_at"]:
+                start = _ms(r["started_at"])
+                candidates = conn.execute(
+                    """SELECT display FROM core.prompts
+                       WHERE project_path = ? AND timestamp_ms BETWEEN ? AND ?
+                       ORDER BY is_slash, ABS(timestamp_ms - ?)""",
+                    (r["project_path"], start - PROMPT_WINDOW_MS, start + PROMPT_WINDOW_MS, start)).fetchall()
+                title = next(filter(None, (_prompt_title(p["display"]) for p in candidates)), None)
+                if title:
+                    conn.execute(
+                        """INSERT INTO session_facts (session_id, title, title_source) VALUES (?, ?, 'prompt')
+                           ON CONFLICT(session_id) DO UPDATE SET title = excluded.title, title_source = 'prompt'
+                           WHERE session_facts.title IS NULL""", (sid, title))
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+
+
 def _map_sessions(conn) -> None:
     _seed_archived_sessions(conn)
     known = {normalize_project_path(r["root"]): r["id"] for r in conn.execute("SELECT id, root FROM repos")}
@@ -69,6 +133,11 @@ def run_pass(data_dir: Path, adapter, now_iso: str | None = None) -> PassResult:
             logger.warning("work: transcript facts failed: %s", e)
             res.errors["facts"] = str(e)
         _map_sessions(conn)
+        try:
+            _fill_from_archive(conn)
+        except Exception as e:  # noqa: BLE001  never stop the pass
+            logger.warning("work: archive fill failed: %s", e)
+            res.errors["archive"] = str(e)
         g = gitscan.global_user_email()
         if g:
             set_meta(conn, "global_user_email", g.lower())

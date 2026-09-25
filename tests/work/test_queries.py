@@ -155,3 +155,25 @@ def test_grouped_overview_counts_shared_commits_once_with_the_best_link(tmp_path
     shas = [c["sha"] for d in t["days"] for i in d["items"] for c in ([i] if i["kind"] == "commit" else i["commits"])]
     assert shas.count("abc1234") == 1
     assert queries.first_activity(conn, 2) == "2026-09-10T10:00:00Z"
+
+
+def test_time_prefers_measured_then_transcript_estimate_then_archive_estimate(tmp_path):
+    conn = _world(tmp_path)
+    # A has measured time; add archive rows that must be ignored for it
+    conn.execute("INSERT INTO active_spans VALUES ('claude_code:A', '2026-09-10T10:05:00Z', 999999, 'archive')")
+    # B keeps only an archive estimate
+    conn.execute("DELETE FROM active_spans WHERE session_id = 'claude_code:B'")
+    conn.execute("INSERT INTO active_spans VALUES ('claude_code:B', '2026-09-20T22:30:00Z', 60000, 'archive')")
+    o = queries.overview(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z")
+    assert o["tiles"]["active_ms"] == 3_600_000 + 60_000 and o["tiles"]["active_estimated"] is True
+    fix_b = next(s for s in o["stories"] if s["title"] == "Fix B")
+    assert fix_b["active_ms"] == 60_000 and fix_b["active_estimated"] is True
+
+
+def test_daily_series_carry_output_tokens_and_cost_and_stories_carry_tokens(tmp_path):
+    conn = _world(tmp_path)   # each session: one turn, 200 output tokens, $2
+    o = queries.overview(conn, 1, "2026-09-09T00:00:00Z", "2026-09-12T00:00:00Z")
+    d = o["daily"]
+    assert d["days"] == ["2026-09-09", "2026-09-10", "2026-09-11", "2026-09-12"]
+    assert d["output_tokens"] == [0, 200, 0, 0] and d["cost"] == [0, 2.0, 0, 0]
+    assert o["stories"][0]["output_tokens"] == 200

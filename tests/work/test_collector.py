@@ -126,3 +126,58 @@ def test_archived_session_without_transcript_is_mapped_and_linked(tmp_path):
     assert conn.execute("SELECT repo_id FROM session_repo WHERE session_id = ?", (sid,)).fetchone()[0] is not None
     link = conn.execute("SELECT evidence FROM session_commits WHERE session_id = ?", (sid,)).fetchone()
     assert link is not None and link[0] == "inferred"
+
+
+def _archive_only(tmp_path, prompts):
+    """A session Claude Code already deleted: argus.db has its turns and your prompts, no transcript."""
+    from argus.schema.types import Prompt
+    from argus.store.repository import normalize_project_path
+
+    repo = make_repo(tmp_path / "proj")
+    path = normalize_project_path(str(repo))
+    data = tmp_path / "data"
+    r = Repository(open_db(data / "argus.db"))
+    sid = "claude_code:gone-0000"
+    r.upsert_session(session_factory(sid, "2026-09-01T10:00:00Z", project_path=path))
+    for i, ts in enumerate(("2026-09-01T10:00:00Z", "2026-09-01T10:02:00Z", "2026-09-01T10:30:00Z")):
+        r.upsert_turn(turn_factory(f"{sid}:m{i}", sid, ts))
+    r.insert_prompts([Prompt(timestamp_ms=ms, project_path=path, display=text, is_slash=slash) for ms, text, slash in prompts])
+    r.db.close()
+    (tmp_path / ".claude" / "projects").mkdir(parents=True)
+    return data, ClaudeCodeAdapter(tmp_path / ".claude"), sid
+
+
+START_MS = 1788256800000   # 2026-09-01T10:00:00Z
+
+
+def test_archive_only_session_gets_estimated_time_and_a_first_prompt_title(tmp_path):
+    data, adapter, sid = _archive_only(tmp_path, [
+        (START_MS - 3_600_000, "an hour earlier, another session", 0),
+        (START_MS - 20_000, "/clear", 1),
+        (START_MS - 5_000, "fix the login bug\nand add a test", 0),
+        (START_MS + 600_000, "later follow-up", 0),
+    ])
+    run_pass(data, adapter, now_iso="2026-09-05T00:00:00Z")
+    run_pass(data, adapter, now_iso="2026-09-05T00:05:00Z")      # a second pass adds nothing twice
+    conn = open_work_db(data)
+    spans = conn.execute("SELECT kind, SUM(ms) FROM active_spans WHERE session_id = ? GROUP BY kind", (sid,)).fetchall()
+    assert [tuple(s) for s in spans] == [("archive", 120_000 + 300_000)]   # 2 min, then 28 min capped at 5
+    f = conn.execute("SELECT title, title_source FROM session_facts WHERE session_id = ?", (sid,)).fetchone()
+    assert tuple(f) == ("fix the login bug", "prompt")
+
+
+def test_no_prompt_near_the_start_leaves_the_session_untitled(tmp_path):
+    data, adapter, sid = _archive_only(tmp_path, [(START_MS - 3_600_000, "an hour earlier", 0)])
+    run_pass(data, adapter, now_iso="2026-09-05T00:00:00Z")
+    conn = open_work_db(data)
+    assert conn.execute("SELECT title FROM session_facts WHERE session_id = ?", (sid,)).fetchone() is None
+
+
+def test_prompt_titles_skip_paste_and_image_placeholders(tmp_path):
+    data, adapter, sid = _archive_only(tmp_path, [
+        (START_MS - 2_000, "[Pasted text #1 +74 lines]", 0),
+        (START_MS + 30_000, "[Image #1] the window shows 235m", 0),
+    ])
+    run_pass(data, adapter, now_iso="2026-09-05T00:00:00Z")
+    conn = open_work_db(data)
+    assert conn.execute("SELECT title FROM session_facts WHERE session_id = ?", (sid,)).fetchone()[0] == "the window shows 235m"

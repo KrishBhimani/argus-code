@@ -62,23 +62,32 @@ def _sessions(conn: sqlite3.Connection, rids: list[int]) -> list[str]:
         f"SELECT session_id FROM session_repo WHERE repo_id IN ({_in(rids)}) ORDER BY session_id", rids)]
 
 
+_KIND_RANK = "CASE kind WHEN 'measured' THEN 0 WHEN 'estimated' THEN 1 ELSE 2 END"
+
+
 def _active_rows(conn, ids: list[str], frm: str, to: str) -> list[sqlite3.Row]:
-    """Active spans in range; a session's estimated rows are used only if it has no measured ones."""
+    """Active spans in range, one source per session: measured (transcript turn durations),
+    else estimated from transcript gaps, else estimated from the archive's turn times."""
     if not ids:
         return []
     return conn.execute(
-        f"""SELECT a.session_id, a.ts, a.ms, a.kind FROM active_spans a
-            WHERE a.session_id IN ({_in(ids)}) AND a.ts >= ? AND a.ts < ?
-              AND (a.kind = 'measured' OR NOT EXISTS (
-                   SELECT 1 FROM active_spans m WHERE m.session_id = a.session_id AND m.kind = 'measured'))""",
+        f"""WITH best AS (
+              SELECT session_id, MIN({_KIND_RANK}) AS r FROM active_spans
+              WHERE session_id IN ({_in(ids)}) GROUP BY session_id)
+            SELECT a.session_id, a.ts, a.ms, a.kind FROM active_spans a JOIN best b ON b.session_id = a.session_id
+            WHERE a.ts >= ? AND a.ts < ? AND {_KIND_RANK.replace('kind', 'a.kind')} = b.r""",
         [*ids, frm, to]).fetchall()
+
+
+def _estimated(kind: str) -> bool:
+    return kind != "measured"
 
 
 def _turn_rows(conn, ids: list[str], frm: str, to: str) -> list[sqlite3.Row]:
     if not ids:
         return []
     return conn.execute(
-        f"""SELECT {_ROOT} AS sid, t.id, t.timestamp, t.cost_usd FROM core.turns t
+        f"""SELECT {_ROOT} AS sid, t.id, t.timestamp, t.cost_usd, t.output_tokens FROM core.turns t
             WHERE {_ROOT} IN ({_in(ids)}) AND t.timestamp >= ? AND t.timestamp < ?""",
         [*ids, frm, to]).fetchall()
 
@@ -110,7 +119,7 @@ def _tiles(conn, rids, ids, frm, to, scope) -> dict:
     active = sum(r["ms"] for r in spans)
     cost = sum(r["cost_usd"] for r in _turn_rows(conn, ids, frm, to))
     commits = len(_commits(conn, rids, frm, to, scope))
-    return {"active_ms": active, "active_estimated": any(r["kind"] == "estimated" for r in spans),
+    return {"active_ms": active, "active_estimated": any(_estimated(r["kind"]) for r in spans),
             "cost": cost, "commits": commits,
             "cost_per_commit": (cost / commits) if commits else None}
 
@@ -150,7 +159,7 @@ def projects(conn: sqlite3.Connection, now_iso: str, tz: int = 0) -> list[dict]:
             "folder_ids": rids,
             "folders": [{"id": f["id"], "root": f["root"], "present": bool(f["present"])} for f in folders],
             "active_ms_30d": sum(s["ms"] for s in spans),
-            "active_estimated": any(s["kind"] == "estimated" for s in spans),
+            "active_estimated": any(_estimated(s["kind"]) for s in spans),
             "commits_30d": len(_commits(conn, rids, frm, to, "mine")),
             "daily_active_ms": list(daily.values()),
             "last_worked_at": max(filter(None, [last_turn, last_commit]), default=None),
@@ -167,7 +176,7 @@ def _summaries(conn, rids, ids, frm, to, scope) -> list[SessionSummary]:
     estimated: set[str] = set()
     for a in _active_rows(conn, list(by_sid), frm, to):
         active[a["session_id"]] = active.get(a["session_id"], 0) + a["ms"]
-        if a["kind"] == "estimated":
+        if _estimated(a["kind"]):
             estimated.add(a["session_id"])
     commits_by_sid: dict[str, list[dict]] = {}
     for c in _commits(conn, rids, frm, to, scope):
@@ -186,7 +195,8 @@ def _summaries(conn, rids, ids, frm, to, scope) -> list[SessionSummary]:
         stamps = sorted(t["timestamp"] for t in ts)
         out.append(SessionSummary(sid, facts["title"] if facts else None, branch, stamps[0], stamps[-1],
                                   active.get(sid, 0), sum(t["cost_usd"] for t in ts), len(ts), skills, prs,
-                                  commits_by_sid.get(sid, []), sid in estimated))
+                                  commits_by_sid.get(sid, []), sid in estimated,
+                                  sum(t["output_tokens"] or 0 for t in ts)))
     return out
 
 
@@ -198,10 +208,17 @@ def overview(conn: sqlite3.Connection, repo_id: int, frm: str, to: str, scope: s
     tiles = _tiles(conn, rids, ids, frm, to, scope)
     days = _days(frm, to, tz)
     active_d, commits_d = dict.fromkeys(days, 0), dict.fromkeys(days, 0)
+    tokens_d, cost_d = dict.fromkeys(days, 0), dict.fromkeys(days, 0.0)
     for a in _active_rows(conn, ids, frm, to):
         d = _local_day(a["ts"], tz)
         if d in active_d:
             active_d[d] += a["ms"]
+    # Tokens and cost come from the archive, so every session counts, transcript or not.
+    for t in _turn_rows(conn, ids, frm, to):
+        d = _local_day(t["timestamp"], tz)
+        if d in tokens_d:
+            tokens_d[d] += t["output_tokens"] or 0
+            cost_d[d] += t["cost_usd"] or 0
     commits = _commits(conn, rids, frm, to, scope)
     for c in commits:
         d = _local_day(c["authored_at"], tz)
@@ -231,7 +248,8 @@ def overview(conn: sqlite3.Connection, repo_id: int, frm: str, to: str, scope: s
     top = lambda d, n: [{"name": k, "value": v} for k, v in sorted(d.items(), key=lambda kv: -kv[1])[:n]]  # noqa: E731
     return {
         "tiles": tiles, "prior": prior,
-        "daily": {"days": days, "active_ms": list(active_d.values()), "commits": list(commits_d.values())},
+        "daily": {"days": days, "active_ms": list(active_d.values()), "commits": list(commits_d.values()),
+                  "output_tokens": list(tokens_d.values()), "cost": list(cost_d.values())},
         "stories": group_stories(summaries, gap),
         "breakdowns": {
             "branches": top(branch_cost, 6),
