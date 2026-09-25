@@ -332,6 +332,40 @@ class Repository:
             out.extend(_row_to_turn(r) for r in rows)
         return out
 
+    def shared_message_turns(self) -> list[Turn]:
+        """Top-level turns whose message id another top-level session also
+        stores. Each turn row is probed through ``idx_turns_message``."""
+        rows = self.db.execute(
+            """
+            SELECT a.* FROM turns a
+            WHERE instr(a.session_id, '/') = 0
+              AND EXISTS (
+                SELECT 1 FROM turns b
+                WHERE substr(b.id, length(b.session_id) + 2) = substr(a.id, length(a.session_id) + 2)
+                  AND b.session_id != a.session_id AND instr(b.session_id, '/') = 0
+              )
+            """
+        ).fetchall()
+        return [_row_to_turn(r) for r in rows]
+
+    def shared_tool_use_ids(self, session_id: str, other_session_ids: list[str]) -> list[str]:
+        """tool_use ids ``session_id`` stores that one of ``other_session_ids``
+        also stores. A tool_use id is unique per API response, so these are
+        copies of the other session's calls."""
+        if not other_session_ids:
+            return []
+        ph = ",".join("?" for _ in other_session_ids)
+        rows = self.db.execute(
+            f"""
+            SELECT DISTINCT substr(a.id, length(a.session_id) + 2) AS tu
+            FROM tool_calls a JOIN tool_calls b
+              ON substr(b.id, length(b.session_id) + 2) = substr(a.id, length(a.session_id) + 2)
+            WHERE a.session_id = ? AND b.session_id IN ({ph})
+            """,
+            [session_id, *other_session_ids],
+        ).fetchall()
+        return [r["tu"] for r in rows]
+
     def top_level_sessions_sharing_messages(self) -> list[str]:
         """Top-level sessions holding a message id another top-level session
         also holds — the fork/parent pairs pre-fix ingest double-counted."""

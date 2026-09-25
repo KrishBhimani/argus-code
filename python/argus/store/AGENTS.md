@@ -26,7 +26,9 @@ migrations; `repository.py` is the typed read/write API over SQLite.
   (`delete_duplicated_turns`, `delete_fork_copy_turns`): turns/tool calls that a forked session stored as
   copies of *another stored session's* messages. It removes derived duplicates
   only — the origin session keeps the rows, the session row itself stays — and
-  callers must verify each copy first (see `collector/AGENTS.md`). Don't widen it
+  callers must verify each copy first (see `collector/AGENTS.md`): against the
+  fork's transcript, or when that's gone, by an exact match of message id,
+  timestamp, model and token counts (`dedupe_shared_messages`). Don't widen it
   into a general "clean up" path.
 - **`idx_turns_message` (MIGRATION_007)** indexes the message-id suffix of
   `turns.id` (`substr(id, length(session_id) + 2)`); queries must use that exact

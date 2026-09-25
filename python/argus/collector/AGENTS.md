@@ -41,7 +41,15 @@ after a schema/feature upgrade.
   only. Search segments of copied lines are not de-duplicated.
   `repair_fork_duplicates_v1` (`_repair_fork_duplicates_once`, background phase)
   parses — doesn't ingest — each session sharing a message id with another and
-  deletes only verified copies; sessions whose file is gone are left alone.
+  deletes only verified copies; sessions whose file is gone are left to the next
+  step. After it, every start runs `dedupe_shared_messages` (DB only, for
+  transcripts already deleted): a message stored under several top-level
+  sessions counts as a copy only when every row matches on timestamp, model and
+  all four token counts (an API message id is unique per response). It stays with
+  the session whose first **own** turn is earliest, i.e. the one that continued first;
+  a session of nothing but copies gives them up (and ends with 0 turns, which the
+  API hides); exact twins keep the lower id. Calls go by shared tool_use id. On
+  the real archive this rule agreed with the transcript-verified parent.
 - **Sub-agents are walked via the parent.** A parent ingest discovers
   `adapter.sub_session_files_for(parent)` and ingests any that **grew past their
   offset**. Sub-agent session ids contain `/` (`<parent>/agent-<hex>`).
