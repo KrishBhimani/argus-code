@@ -44,8 +44,12 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   `argus pricing refresh` writes to `<data_dir>/pricing/` (never into the installed
   package — upgrades wipe it and it may be read-only); `load_pricing_table(user_dir=...)`
   picks the newest version across that dir and the bundled one. An unpriced model
-  costs $0 and is logged once per process; the startup backfill re-prices those
-  turns when a newer table includes the model. New model prices come from
+  costs $0 and is logged once per process (placeholders like `<synthetic>` are
+  not). Every start, `_reprice_stored_turns` (collector/first_run.py) re-prices
+  $0 turns of now-listed models **from their stored token columns** and
+  recomputes those sessions (sub-agents before parents). That's needed because
+  their transcripts are often already deleted, so the re-read backfill can't
+  reach them. New model prices come from
   Anthropic's published per-MTok rates — don't copy LiteLLM numbers unverified.
 - `scaffold/` — `argus claude` scaffolding (templates, snapshot, storage).
   **`template create` copies only what `plan_snapshot()` lists**: one walk over

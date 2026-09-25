@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..adapters.base import Adapter
+from ..pricing.compute import compute_turn_cost
 from ..pricing.types import PricingTable
 from ..store.repository import Repository
 from .pipeline import ingest_file, recompute_stored_session
@@ -149,6 +150,7 @@ def run_first_pass_ingest(
     cutoff = time.time() - recent_days * 86_400
     handle = FirstRunHandle()
     _repair_session_durations_once(repo)
+    _reprice_stored_turns(repo, table)
     for key in _REREAD_ALL_SWEEPS:
         _prepare_reread_sweep(repo, key)
 
@@ -270,6 +272,34 @@ def _repair_session_durations_once(repo: Repository) -> None:
     if fixed:
         logger.info("Repaired duration/start columns on %d sessions.", fixed)
     repo.set_app_meta(SESSION_DURATION_REPAIR_KEY, "1")
+
+
+def _reprice_stored_turns(repo: Repository, table: PricingTable) -> None:
+    """Price $0 turns whose model the current table now lists, in the DB.
+
+    Runs every start (cheap: one scan of turns that finds nothing once
+    done), because Claude Code deletes transcripts after ~30 days: the
+    re-read backfill can't reach turns whose file is gone, but every turn
+    keeps its token counts. Sub-agent sessions are recomputed before their
+    parents so the parent's rollup sees the new sub-agent totals.
+    """
+    turns = repo.zero_cost_turns_for_models(list(table.models))
+    if not turns:
+        return
+    costs = {t.id: compute_turn_cost(t, table) for t in turns}
+    sessions = {t.session_id for t in turns}
+    parents = {s.split("/", 1)[0] for s in sessions}
+    with repo.transaction():
+        repo.set_turn_costs(costs)
+        for sid in sorted(sessions - parents):  # sub-agents first
+            recompute_stored_session(repo, sid, table.version)
+        for sid in sorted(parents):
+            recompute_stored_session(repo, sid, table.version)
+    logger.info(
+        "Re-priced %d stored turns in %d sessions (models the pricing table now lists).",
+        len(costs),
+        len(parents),
+    )
 
 
 def _parse_whole_file(adapter: Adapter, file: Path) -> tuple[list, list]:

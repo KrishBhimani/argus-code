@@ -33,7 +33,8 @@ def compute_turn_cost(t: Any, table: PricingTable) -> float:
     if p is None:
         # $0 is indistinguishable from "free" on the dashboard, so say so.
         # The startup backfill re-prices these turns once a table has them.
-        if model and model not in _warned_unknown:
+        # "<synthetic>" etc. are Claude Code placeholders, never priceable.
+        if model and not model.startswith("<") and model not in _warned_unknown:
             _warned_unknown.add(model)
             logger.warning(
                 "No price for model %r in pricing table %s; its turns cost $0 until "

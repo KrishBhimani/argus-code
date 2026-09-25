@@ -1025,6 +1025,31 @@ class Repository:
         ).fetchone()
         return row["n"] if row else 0
 
+    def zero_cost_turns_for_models(self, priced_models: list[str]) -> list[Turn]:
+        """$0 turns with tokens whose model is in ``priced_models``: priced
+        under an older table that lacked the model. Their token columns are
+        stored, so the cost can be recomputed without the transcript."""
+        if not priced_models:
+            return []
+        ph = ",".join("?" for _ in priced_models)
+        rows = self.db.execute(
+            f"""
+            SELECT * FROM turns
+            WHERE cost_usd = 0 AND model IN ({ph})
+              AND (fresh_input_tokens + output_tokens
+                   + cache_read_tokens + cache_write_tokens) > 0
+            """,
+            priced_models,
+        ).fetchall()
+        return [_row_to_turn(r) for r in rows]
+
+    @_writes
+    def set_turn_costs(self, costs: dict[str, float]) -> None:
+        """Rewrite ``turns.cost_usd`` by turn id (re-pricing only)."""
+        self.db.executemany(
+            "UPDATE turns SET cost_usd = ? WHERE id = ?", [(c, i) for i, c in costs.items()]
+        )
+
     def sessions_with_unpriced_turns(
         self, priced_models: list[str], limit: int
     ) -> list[dict[str, Any]]:
