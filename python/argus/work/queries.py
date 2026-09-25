@@ -132,8 +132,9 @@ def _summaries(conn, repo_id, ids, frm, to, scope) -> list[SessionSummary]:
         facts = conn.execute("SELECT title FROM session_facts WHERE session_id = ?", (sid,)).fetchone()
         branch = conn.execute("SELECT git_branch FROM session_repo WHERE session_id = ?", (sid,)).fetchone()["git_branch"]
         skills = [r["skill"] for r in conn.execute(
-            f"SELECT DISTINCT skill FROM turn_attribution WHERE skill IS NOT NULL AND turn_id IN ({_in([t['id'] for t in ts])})",
-            [t["id"] for t in ts])]
+            f"""SELECT DISTINCT ta.skill FROM turn_attribution ta JOIN core.turns t ON t.id = ta.turn_id
+                WHERE ta.skill IS NOT NULL AND {_ROOT} = ? AND t.timestamp >= ? AND t.timestamp < ?""",
+            (sid, frm, to))]
         prs = [r["pr_number"] for r in conn.execute("SELECT pr_number FROM session_prs WHERE session_id = ? AND pr_number IS NOT NULL", (sid,))]
         stamps = sorted(t["timestamp"] for t in ts)
         out.append(SessionSummary(sid, facts["title"] if facts else None, branch, stamps[0], stamps[-1],
@@ -163,13 +164,16 @@ def overview(conn: sqlite3.Connection, repo_id: int, frm: str, to: str, scope: s
     branch_cost: dict[str, float] = {}
     for s in summaries:
         branch_cost[s.branch or "(no branch)"] = branch_cost.get(s.branch or "(no branch)", 0) + s.cost
-    turn_ids = [t["id"] for t in _turn_rows(conn, ids, frm, to)]
-    turn_cost = {t["id"]: t["cost_usd"] for t in _turn_rows(conn, ids, frm, to)}
+    # Joined in SQL: binding every turn id in range hit SQLite's variable limit on busy projects.
     skill_cost: dict[str, float] = {}
-    for r in conn.execute(f"SELECT turn_id, skill, mcp_server FROM turn_attribution WHERE turn_id IN ({_in(turn_ids)})", turn_ids):
+    for r in conn.execute(
+        f"""SELECT ta.skill, ta.mcp_server, SUM(t.cost_usd) AS cost
+            FROM turn_attribution ta JOIN core.turns t ON t.id = ta.turn_id
+            WHERE {_ROOT} IN ({_in(ids)}) AND t.timestamp >= ? AND t.timestamp < ?
+            GROUP BY ta.skill, ta.mcp_server""", [*ids, frm, to]):
         name = r["skill"] or (f"{r['mcp_server']} (MCP)" if r["mcp_server"] else None)
         if name:
-            skill_cost[name] = skill_cost.get(name, 0) + turn_cost.get(r["turn_id"], 0)
+            skill_cost[name] = skill_cost.get(name, 0) + (r["cost"] or 0)
     total_cost = tiles["cost"] or 1
     files: dict[str, int] = {}
     shas = [c["sha"] for c in commits]

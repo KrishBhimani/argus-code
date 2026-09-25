@@ -83,3 +83,24 @@ def test_estimated_active_time_is_flagged_everywhere(tmp_path):
     assert p["active_estimated"] is True
     items = [i for d in queries.timeline(conn, 1, frm, to)["days"] for i in d["items"] if i["kind"] == "session"]
     assert {i["session_id"]: i["active_estimated"] for i in items} == {"claude_code:A": False, "claude_code:B": True}
+
+
+def test_overview_survives_a_very_busy_project(tmp_path):
+    """Review minor-1, upgraded (it breaks the main view): the skill/MCP breakdown bound
+    every turn id in range as a SQL variable, so > 32,766 turns in 30 days raised
+    'too many SQL variables' and the Overview returned 500."""
+    import sqlite3 as sq
+
+    conn = _world(tmp_path)
+    conn.close()
+    core = sq.connect(tmp_path / "argus.db")
+    core.executemany(
+        "INSERT INTO turns (id, session_id, sequence, timestamp, model, model_raw, cost_usd, metadata) "
+        "VALUES (?, 'claude_code:A', ?, '2026-09-12T10:00:00Z', 'm', 'm', 0.001, '{}')",
+        [(f"claude_code:A:bulk{i}", i) for i in range(33_000)])
+    core.commit()
+    core.close()
+    conn = open_work_db(tmp_path)
+    conn.execute("INSERT INTO turn_attribution VALUES ('claude_code:A:bulk7', 'superpowers:tdd', NULL, NULL, NULL)")
+    o = queries.overview(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z")
+    assert {s["name"] for s in o["breakdowns"]["skills"]} == {"superpowers:brainstorming", "superpowers:tdd"}
