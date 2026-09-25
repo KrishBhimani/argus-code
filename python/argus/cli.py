@@ -374,13 +374,14 @@ def template_create(
     # Say what was withheld. A credential filter that drops files silently is
     # its own bug — the user needs to know the template is deliberately
     # incomplete, and why.
-    withheld = secret_files_in(project / ".claude")
+    withheld = secret_files_in(project / ".claude", included)
     if withheld:
         typer.echo(
-            "\nLeft out of the template (looks like credentials): "
+            "\nLeft out of the template (credentials, machine-local config, or "
+            "links out of the folder): "
             + ", ".join(withheld)
-            + "\nTemplates get copied into every project you scaffold, so "
-            "secrets are never snapshotted."
+            + "\nTemplates get copied into every project you scaffold, so these "
+            "are never snapshotted."
         )
 
 

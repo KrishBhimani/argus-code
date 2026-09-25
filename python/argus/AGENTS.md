@@ -42,6 +42,12 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
 - `detectors/` — alert detectors (registry + individual rules like tool-error-rate spike).
 - `pricing/` — pricing table load / refresh / compute; bundled JSON under repo `pricing/`.
 - `scaffold/` — `argus claude` scaffolding (templates, snapshot, storage).
+  **`template create` copies only what `plan_snapshot()` lists**: one walk over
+  top-level files and the chosen subfolders, at every depth, that never follows
+  a symlink/junction/reparse point (including the subfolder itself) and skips
+  `is_secret_file` names and `*.local.json`. The CLI's "left out" message is
+  built from the same walk (`secret_files_in(claude, included)`) — don't
+  reintroduce `shutil.copytree` or a second, diverging filter.
 - `schema/` — shared pydantic types (`Session`, `Turn`, …). Changing a stored
   field ripples into `store/` (columns) and `server/` (serialization).
 
