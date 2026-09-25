@@ -30,6 +30,10 @@ analyses in `src/lib/analysis/`.
   are content-hashed, so a real change shows as new `assets/index-*.js|css` plus
   an updated `index.html` — verify the new asset in `dashboard-dist` before
   committing.
+- **Work trial (`features/work/`, routes `/projects`, `/projects/$repo`).** The sidebar's
+  `WORK › Projects` item renders only when `GET /api/work/status` succeeds (it 404s
+  unless `argus start --work`). Its API client lives in `features/work/api.ts`, not
+  `lib/api`, so the trial stays removable in one folder.
 - **SPA routing.** Deep links (`/sessions/<id>`) are served by the `index.html`
   fallback in `python/argus/server/app.py`; legacy `/session?id=` and `/prompts`
   URLs redirect client-side (`src/routes/session.tsx`, `src/routes/prompts.tsx`).

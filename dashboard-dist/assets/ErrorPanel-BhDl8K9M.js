@@ -1,0 +1,1 @@
+import{j as e}from"./index-DLHtFBSL.js";const s=({error:t})=>e.jsxs("div",{role:"alert",className:"border border-crit/40 bg-crit/8 rounded-md p-3 text-xs text-ink-1",children:[e.jsx("span",{className:"text-crit-ink font-medium",children:"Could not load."})," ",t instanceof Error?t.message:String(t)]});export{s as E};

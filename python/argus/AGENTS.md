@@ -39,6 +39,12 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   guard, `daemon start`, `argus start` read-only mode) use `running_pid`, which
   also counts UNVERIFIED and tells the user how to clear it. The Windows branch
   is unit-tested with a fake `kernel32`, not exercised on Windows in CI.
+- `work/` — **trial** (opt-in `argus start --work`, `argus work scan|status`): local git
+  history + transcript facts the pipeline skips, session↔commit links labelled
+  `exact`/`coauthored`/`inferred`, and `/api/work/*`. Writes only
+  `<data_dir>/work.db`; `argus.db` is reached solely through a read-only `ATTACH`
+  (asserted by `tests/work/test_isolation.py`). Nothing imports it unless the flag is
+  on. Removal = delete this package, `features/work/`, two routes, and `work.db`.
 - `detectors/` — alert detectors: the registry, the shared helpers in `base.py`,
   and one module per rule (`tool_error_rate_spike`, `cost_spike`, `cache_hit_drop`).
 - `pricing/` — pricing table load / refresh / compute; bundled JSON under repo `pricing/`.
