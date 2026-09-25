@@ -340,10 +340,17 @@ def _ingest_file(
                 continue
 
         for sub in grown:
-            subs_changed = True
             sub_session_id = f"{session_id}/{sub.stem}"
             sub_from_offset = repo.get_file_offset(str(sub))
             sub_result, sub_new_offset = adapter.ingest_file(sub, sub_from_offset)
+            if not sub_result.turns and repo.get_session(sub_session_id) is None:
+                # Nothing to attach rows to yet: typically a sub-agent holding
+                # only its prompt. Its segments would reference a session row
+                # that doesn't exist (FOREIGN KEY failure, which rolls back the
+                # whole parent tick). Leave the offset so these lines are read
+                # again, errors included, together with the first reply.
+                continue
+            subs_changed = True
 
             for e in sub_result.parse_errors:
                 repo.record_parse_error(

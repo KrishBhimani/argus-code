@@ -409,3 +409,57 @@ def test_backfill_indexes_subagent_segments_after_enabling(tmp_path: Path, repo)
     # The sub-agent transcript must now be indexed -> Task given is recoverable.
     assert repo.count_segments_for_session(sub_id) > 0
     assert repo._first_user_text(sub_id) == "Research consensus mechanisms"
+
+
+def _asst(sid: str, mid: str, ts: str) -> str:
+    return json.dumps({
+        "type": "assistant", "sessionId": sid, "uuid": "u" + mid, "timestamp": ts, "cwd": "C:/proj",
+        "version": "2.1.94", "userType": "external", "entrypoint": "cli",
+        "message": {"id": mid, "model": "claude-opus-4-7", "role": "assistant",
+                    "content": [{"type": "text", "text": "done: summarised the API docs"}],
+                    "usage": {"input_tokens": 10, "output_tokens": 5,
+                              "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}},
+    }) + "\n"
+
+
+def _prompt(sid: str, ts: str) -> str:
+    return json.dumps({
+        "type": "user", "sessionId": sid, "uuid": "u-prompt", "timestamp": ts, "cwd": "C:/proj",
+        "isSidechain": True, "message": {"role": "user", "content": "Research the zebrafish API docs"},
+    }) + "\n"
+
+
+def test_prompt_only_subagent_does_not_block_the_parent(tmp_path: Path, repo):
+    """REGRESSION: with search indexing on, a sub-agent file holding only its
+    prompt (no reply yet) stored that prompt's segment before the sub-agent's
+    session row existed -> FOREIGN KEY constraint failed. Since ingest became
+    one transaction per file, that rolled back the whole PARENT tick on every
+    retry, so a sub-agent cancelled before its first reply froze its parent
+    session forever. 9 such errors sat in a real archive's parse_errors."""
+    repo.set_search_indexing_enabled(True)
+    root = tmp_path / ".claude"
+    proj = root / "projects" / "C--proj"
+    (proj / "s1" / "subagents").mkdir(parents=True)
+    parent = proj / "s1.jsonl"
+    sub = proj / "s1" / "subagents" / "agent-a.jsonl"
+    parent.write_text(_asst("s1", "m1", "2026-05-01T00:00:00Z"), encoding="utf-8")
+    sub.write_text(_prompt("s1", "2026-05-01T00:00:01Z"), encoding="utf-8")
+    adapter, table = ClaudeCodeAdapter(root), load_pricing_table()
+
+    ingest_file(adapter, parent, repo, table)  # must not raise
+
+    assert repo.get_session("claude_code:s1").turn_count == 1
+    assert repo.get_file_offset(str(parent)) == parent.stat().st_size
+    assert repo.get_session("claude_code:s1/agent-a") is None
+    assert repo.get_file_offset(str(sub)) == 0  # prompt kept for the next read
+    assert repo.recent_parse_errors(10) == []
+
+    # The sub-agent replies: its prompt is stored now, with the reply.
+    with sub.open("a", encoding="utf-8") as fh:
+        fh.write(_asst("s1", "m2", "2026-05-01T00:00:09Z"))
+    ingest_file(adapter, parent, repo, table)
+
+    assert repo.get_session("claude_code:s1/agent-a").turn_count == 1
+    assert repo.get_file_offset(str(sub)) == sub.stat().st_size
+    assert repo.count_segments_for_session("claude_code:s1/agent-a") == 2  # prompt + reply
+    assert repo.get_session("claude_code:s1").turn_count == 2  # rollup includes the sub-agent

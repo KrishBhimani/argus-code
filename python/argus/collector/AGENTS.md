@@ -53,6 +53,10 @@ after a schema/feature upgrade.
 - **Sub-agents are walked via the parent.** A parent ingest discovers
   `adapter.sub_session_files_for(parent)` and ingests any that **grew past their
   offset**. Sub-agent session ids contain `/` (`<parent>/agent-<hex>`).
+  A sub-agent with no stored session and no turns in this read (typically just
+  its prompt) is **skipped without advancing its offset**: its segments would
+  reference a missing session row (FOREIGN KEY failure, which rolls back the
+  whole parent tick). The lines are read again with the first reply.
 - **Segments are gated on indexing.** Parent and sub-agent segments are written
   only when `repo.is_search_indexing_enabled()` (see `store/AGENTS.md`). So
   enabling indexing *after* ingest requires re-reading the relevant files.
