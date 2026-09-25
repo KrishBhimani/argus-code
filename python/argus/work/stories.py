@@ -21,6 +21,7 @@ class SessionSummary:
     active_estimated: bool = False
     output_tokens: int = 0
     whole: dict | None = None   # the whole session's totals when the range cuts it
+    model: str | None = None
 
 
 def _t(ts: str) -> float:
@@ -54,6 +55,11 @@ def _story(group: list[SessionSummary]) -> dict:
         "cost": sum(s.cost for s in group),
         "output_tokens": sum(s.output_tokens for s in group),
         "whole": _whole(group),
+        # details on demand: an expanded piece lists its sessions and commits
+        "session_list": [{"session_id": s.session_id, "title": s.title, "model": s.model, "turns": s.turns,
+                          "first_ts": s.first_ts, "last_ts": s.last_ts, "active_ms": s.active_ms,
+                          "active_estimated": s.active_estimated} for s in group],
+        "commit_list": [{"sha": c["sha"], "subject": c.get("subject", ""), "evidence": c["evidence"]} for c in commits],
         "first_ts": group[0].first_ts,
         "last_ts": max(s.last_ts for s in group),
         "commits": {"total": len(commits), **ev},

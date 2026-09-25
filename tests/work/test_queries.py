@@ -32,8 +32,10 @@ def test_projects_list(tmp_path):
     conn = _world(tmp_path)
     (p,) = queries.projects(conn, now_iso="2026-09-25T00:00:00Z")
     assert (p["id"], p["display_name"], p["present"]) == (1, "proj", True)
-    assert p["active_ms_30d"] == 5_400_000 and p["commits_30d"] == 1   # mine only
-    assert p["last_worked_at"] == "2026-09-20T22:30:00Z" and len(p["daily_active_ms"]) == 30
+    assert p["active_ms"] == 5_400_000 and p["commits"] == 1   # mine only
+    assert (p["tokens"], p["cost"]) == (400, 4.0)             # A and B: 200 output tokens, $2 each
+    assert p["last_worked_at"] == "2026-09-20T22:30:00Z" and len(p["daily_tokens"]) == 30
+    assert p["latest"] == {"title": "Fix B", "branch": "main", "session_id": "claude_code:B"}
 
 
 def test_overview_tiles_and_stories(tmp_path):
@@ -137,8 +139,8 @@ def test_folders_of_one_repo_are_one_project_and_forks_stay_apart(tmp_path):
     p = ps[1]
     assert p["display_name"] == "proj" and p["folder_ids"] == [1, 2]
     assert [f["root"] for f in p["folders"]] == ["/r", "/old/proj-clone"]
-    assert p["commits_30d"] == 2          # abc1234 once, cl00001; Mate's commit isn't "mine"
-    assert p["active_ms_30d"] == 5_400_000
+    assert p["commits"] == 2          # abc1234 once, cl00001; Mate's commit isn't "mine"
+    assert p["active_ms"] == 5_400_000
 
 
 def test_grouped_overview_counts_shared_commits_once_with_the_best_link(tmp_path):
@@ -219,3 +221,28 @@ def test_prs_from_another_repo_are_not_tagged_on_this_project(tmp_path):
     ])
     o = queries.overview(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z")
     assert next(s for s in o["stories"] if s["title"] == "Build A")["prs"] == [7]
+
+
+def test_projects_list_follows_the_period(tmp_path):
+    conn = _world(tmp_path)
+    (week,) = queries.projects(conn, now_iso="2026-09-25T00:00:00Z", days=7)     # only B (Sep 20)
+    assert (week["tokens"], week["cost"], week["commits"], len(week["daily_tokens"])) == (200, 2.0, 0, 7)
+    (ever,) = queries.projects(conn, now_iso="2026-09-25T00:00:00Z", days=0)     # since the first activity
+    assert ever["tokens"] == 400 and ever["commits"] == 1
+    conn.execute("DELETE FROM active_spans")
+    conn.execute("DELETE FROM commits")
+    (quiet,) = queries.projects(conn, now_iso="2026-12-25T00:00:00Z")            # nothing in the last 30 days
+    assert (quiet["tokens"], quiet["commits"], quiet["active_ms"]) == (0, 0, 0)
+    assert quiet["latest"]["title"] == "Fix B"                                   # still says what was done last
+
+
+def test_stories_list_their_sessions_and_commits(tmp_path):
+    conn = _world(tmp_path)
+    o = queries.overview(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z")
+    a = next(s for s in o["stories"] if s["title"] == "Build A")
+    assert a["commit_list"] == [{"sha": "abc1234", "subject": "feat: a", "evidence": "exact"}]
+    (sess,) = a["session_list"]
+    assert sess["session_id"] == "claude_code:A" and sess["title"] == "Build A" and sess["turns"] == 1
+    assert sess["model"] == "claude-opus-4-7" and sess["active_ms"] == 3_600_000
+    items = [i for d in queries.timeline(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z")["days"] for i in d["items"]]
+    assert {i["session_id"]: i["output_tokens"] for i in items if i["kind"] == "session"} == {"claude_code:A": 200, "claude_code:B": 200}

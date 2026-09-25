@@ -145,25 +145,52 @@ def _project_name(key: str, primary: sqlite3.Row, n_folders: int) -> str:
     return primary["display_name"]
 
 
-def projects(conn: sqlite3.Connection, now_iso: str, tz: int = 0) -> list[dict]:
+def _earliest(conn: sqlite3.Connection) -> str | None:
+    r = conn.execute("""SELECT MIN(ts) FROM (SELECT MIN(authored_at) AS ts FROM commits
+                        UNION ALL SELECT MIN(ts) FROM active_spans)""").fetchone()
+    return r[0]
+
+
+def projects(conn: sqlite3.Connection, now_iso: str, tz: int = 0, days: int = 30) -> list[dict]:
+    """One row per project for the last `days` days (0 = all time): tokens and cost from
+    argus.db, commits from git, time from active spans, and the latest piece of work."""
     to = now_iso
-    frm = _iso(_dt(now_iso) - timedelta(days=30))
-    days = _days(_iso(_dt(now_iso) - timedelta(days=29)), now_iso, tz)
+    first = _earliest(conn) if days == 0 else None
+    frm = first or _iso(_dt(now_iso) - timedelta(days=days or 30))
+    buckets = _days(frm if days == 0 else _iso(_dt(now_iso) - timedelta(days=(days or 30) - 1)), now_iso, tz)
     groups: dict[str, list[sqlite3.Row]] = {}
     for r in conn.execute("SELECT * FROM repos ORDER BY id").fetchall():
         groups.setdefault(r["project_key"] or f"id:{r['id']}", []).append(r)
+    ids_of = {key: _sessions(conn, [f["id"] for f in folders]) for key, folders in groups.items()}
+    project_of = {sid: key for key, ids in ids_of.items() for sid in ids}
+    has_core = conn.execute("SELECT 1 FROM pragma_database_list WHERE name = 'core'").fetchone() is not None
+    # One pass over the period's turns for every project: scanning per project was the slow part.
+    tokens = {key: dict.fromkeys(buckets, 0) for key in groups}
+    cost = dict.fromkeys(groups, 0.0)
+    if has_core:
+        for t in conn.execute("SELECT session_id, timestamp, output_tokens, cost_usd FROM core.turns WHERE timestamp >= ? AND timestamp < ?",
+                              (frm, to)):
+            key = project_of.get(t["session_id"].split("/", 1)[0])
+            if key is None:
+                continue
+            cost[key] += t["cost_usd"] or 0
+            d = _local_day(t["timestamp"], tz)
+            if d in tokens[key]:
+                tokens[key][d] += t["output_tokens"] or 0
     out = []
     for key, folders in groups.items():
         rids = [f["id"] for f in folders]
         r = next((f for f in folders if f["present"]), folders[0])   # the folder shown as the project's root
-        ids = _sessions(conn, rids)
+        ids = ids_of[key]
         spans = _active_rows(conn, ids, frm, to)
-        daily = dict.fromkeys(days, 0)
-        for s in spans:
-            d = _local_day(s["ts"], tz)
-            if d in daily:
-                daily[d] += s["ms"]
-        last_turn = conn.execute(f"SELECT MAX(t.timestamp) AS m FROM core.turns t WHERE {_ROOT} IN ({_in(ids)})", ids).fetchone()["m"] if ids else None
+        ended = conn.execute(f"SELECT id, ended_at FROM core.sessions WHERE id IN ({_in(ids)}) ORDER BY ended_at DESC LIMIT 1",
+                             ids).fetchone() if has_core and ids else None
+        latest = None
+        if ended:
+            f = conn.execute("SELECT title FROM session_facts WHERE session_id = ?", (ended["id"],)).fetchone()
+            b = conn.execute("SELECT git_branch FROM session_repo WHERE session_id = ?", (ended["id"],)).fetchone()
+            latest = {"title": f["title"] if f and f["title"] else None, "branch": b["git_branch"] if b else None,
+                      "session_id": ended["id"]}
         mine_commits = _commits(conn, rids, "0000", to, "mine")
         last_commit = mine_commits[-1]["authored_at"] if mine_commits else None
         out.append({
@@ -172,11 +199,14 @@ def projects(conn: sqlite3.Connection, now_iso: str, tz: int = 0) -> list[dict]:
             "last_error": next((f["last_error"] for f in folders if f["last_error"]), None),
             "folder_ids": rids,
             "folders": [{"id": f["id"], "root": f["root"], "present": bool(f["present"])} for f in folders],
-            "active_ms_30d": sum(s["ms"] for s in spans),
+            "active_ms": sum(s["ms"] for s in spans),
             "active_estimated": any(_estimated(s["kind"]) for s in spans),
-            "commits_30d": len(_commits(conn, rids, frm, to, "mine")),
-            "daily_active_ms": list(daily.values()),
-            "last_worked_at": max(filter(None, [last_turn, last_commit]), default=None),
+            "tokens": sum(tokens[key].values()),
+            "cost": cost[key],
+            "commits": sum(1 for c in mine_commits if frm <= c["authored_at"] < to),
+            "daily_tokens": list(tokens[key].values()),
+            "last_worked_at": max(filter(None, [ended["ended_at"] if ended else None, last_commit]), default=None),
+            "latest": latest,
         })
     return sorted(out, key=lambda p: p["last_worked_at"] or "", reverse=True)
 
@@ -203,6 +233,11 @@ def _whole(conn, sid: str, frm: str, to: str) -> dict | None:
     return {"first_ts": w["a"], "last_ts": w["b"], "output_tokens": w["o"] or 0, "cost": w["c"] or 0.0}
 
 
+def _model(conn, sid: str) -> str | None:
+    row = conn.execute("SELECT primary_model FROM core.sessions WHERE id = ?", (sid,)).fetchone()
+    return row["primary_model"] if row else None
+
+
 def _summaries(conn, rids, ids, frm, to, scope) -> list[SessionSummary]:
     slug = _repo_slug(conn, rids)
     turns = _turn_rows(conn, ids, frm, to)
@@ -219,7 +254,8 @@ def _summaries(conn, rids, ids, frm, to, scope) -> list[SessionSummary]:
     for c in _commits(conn, rids, frm, to, scope):
         if c["session_id"]:
             commits_by_sid.setdefault(c["session_id"], []).append(
-                {"sha": c["sha"], "evidence": c["evidence"], "added": c["added"], "deleted": c["deleted"], "files": c["files"]})
+                {"sha": c["sha"], "subject": c["subject"], "evidence": c["evidence"],
+                 "added": c["added"], "deleted": c["deleted"], "files": c["files"]})
     out = []
     for sid, ts in by_sid.items():
         facts = conn.execute("SELECT title FROM session_facts WHERE session_id = ?", (sid,)).fetchone()
@@ -235,7 +271,8 @@ def _summaries(conn, rids, ids, frm, to, scope) -> list[SessionSummary]:
         out.append(SessionSummary(sid, facts["title"] if facts else None, branch, stamps[0], stamps[-1],
                                   active.get(sid, 0), sum(t["cost_usd"] for t in ts), len(ts), skills, prs,
                                   commits_by_sid.get(sid, []), sid in estimated,
-                                  sum(t["output_tokens"] or 0 for t in ts), _whole(conn, sid, frm, to)))
+                                  sum(t["output_tokens"] or 0 for t in ts), _whole(conn, sid, frm, to),
+                                  _model(conn, sid)))
     return out
 
 
@@ -306,16 +343,15 @@ def timeline(conn: sqlite3.Connection, repo_id: int, frm: str, to: str, kind: st
     items: list[dict] = []
     if kind in ("all", "sessions"):
         for s in summaries:
-            core = conn.execute("SELECT primary_model FROM core.sessions WHERE id = ?", (s.session_id,)).fetchone()
             errors = conn.execute(
                 "SELECT COALESCE(SUM(is_error), 0) AS e FROM core.tool_calls WHERE session_id = ? OR substr(session_id, 1, ?) = ?",
                 (s.session_id, len(s.session_id) + 1, s.session_id + "/")).fetchone()["e"]
-            commits = [{**c, **dict(conn.execute(
-                f"SELECT subject, author_name FROM commits WHERE repo_id IN ({_in(rids)}) AND sha = ? LIMIT 1",
-                [*rids, c["sha"]]).fetchone())} for c in s.commits]
+            commits = [{**c, "author_name": conn.execute(
+                f"SELECT author_name FROM commits WHERE repo_id IN ({_in(rids)}) AND sha = ? LIMIT 1",
+                [*rids, c["sha"]]).fetchone()["author_name"]} for c in s.commits]
             items.append({"kind": "session", "session_id": s.session_id, "title": s.title, "branch": s.branch,
                           "first_ts": s.first_ts, "last_ts": s.last_ts, "active_ms": s.active_ms, "active_estimated": s.active_estimated, "cost": s.cost,
-                          "turns": s.turns, "model": core["primary_model"] if core else None, "tool_errors": errors,
+                          "turns": s.turns, "model": s.model, "tool_errors": errors, "output_tokens": s.output_tokens,
                           "commits": [] if kind == "sessions" else commits, "sort_ts": s.first_ts})
     if kind in ("all", "commits") and branch is None:
         linked = {c["sha"] for s in summaries for c in s.commits} if kind == "all" else set()

@@ -62,3 +62,10 @@ def test_period_reaches_back_to_the_first_activity(tmp_path):
     o = c.get(f"/api/work/projects/1/overview?{to}&days=0").json()
     assert o["daily"]["days"][0] == "2026-05-02" and o["tiles"]["commits"] == 2
     assert c.get(f"/api/work/projects/1/overview?{to}&days=-1").status_code == 400
+
+
+def test_projects_take_a_period(tmp_path):
+    _world(tmp_path).close()
+    c = _client(tmp_path, work=True)
+    assert c.get("/api/work/projects?days=0").status_code == 200
+    assert c.get("/api/work/projects?days=-1").status_code == 400

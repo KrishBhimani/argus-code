@@ -48,8 +48,8 @@ def build_work_router(data_dir: Path) -> APIRouter:
                 "repos": conn.execute("SELECT COUNT(*) FROM repos").fetchone()[0], "errors": errors}
 
     @r.get("/projects")
-    def projects(tz: int = TZ) -> dict:
-        return {"projects": queries.projects(conn, _iso(_now()), tz)}
+    def projects(tz: int = TZ, days: int = DAYS) -> dict:
+        return {"projects": queries.projects(conn, _iso(_now()), tz, days)}
 
     @r.get("/projects/{repo_id}/overview")
     def overview(repo_id: int, from_: str | None = Query(None, alias="from"), to: str | None = None,
