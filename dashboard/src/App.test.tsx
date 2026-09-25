@@ -11,5 +11,7 @@ it('renders the shell at /', async () => {
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  expect(await screen.findByText('ARGUS')).toBeInTheDocument();
+  // Whole-app render under a parallel full run already took ~1.1 s on main, right at
+  // findByText's 1 s default; this asserts that the shell renders, not how fast.
+  expect(await screen.findByText('ARGUS', {}, { timeout: 5000 })).toBeInTheDocument();
 });
