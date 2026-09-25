@@ -222,6 +222,9 @@ def run_first_pass_ingest(
         if not handle._stop.is_set():
             _repair_fork_duplicates_once(adapters, repo, table)
         if not handle._stop.is_set():
+            # Transcript-verified repair first; this catches the rest (files gone).
+            dedupe_shared_messages(repo, table)
+        if not handle._stop.is_set():
             _backfill_missing_derived_data(
                 adapters, repo, table, should_stop=handle._stop.is_set
             )
@@ -314,6 +317,72 @@ def _parse_whole_file(adapter: Adapter, file: Path) -> tuple[list, list]:
         if new_offset <= offset:
             return turns, calls
         offset = new_offset
+
+
+def _msg_id(turn_id: str, session_id: str) -> str:
+    return turn_id[len(session_id) + 1 :]
+
+
+def _exact_copy_key(t) -> tuple:  # noqa: ANN001 - Turn
+    return (t.timestamp, t.model, t.fresh_input_tokens, t.output_tokens,
+            t.cache_read_tokens, t.cache_write_tokens)
+
+
+def dedupe_shared_messages(repo: Repository, table: PricingTable) -> int:
+    """Remove copies of one API message stored under several top-level
+    sessions, using the DB alone; return the number of sessions changed.
+
+    For forks/resumes whose transcripts Claude Code already deleted, which
+    the file-verified ``_repair_fork_duplicates_once`` can't check. A message
+    id is unique per API response, so rows sharing it *and* its timestamp,
+    model and token counts are the same message stored twice; anything less
+    exact is left alone. The message stays with the session that continued
+    with its own work first (a fork or resume is made later, from a session
+    in use; on a real archive this matched the transcript-verified parent);
+    a session holding nothing but copies gives them up; exact twins keep the
+    lower session id. Tool calls go with them by tool_use id (also unique per
+    response). Idempotent: a second run finds nothing shared.
+    """
+    groups: dict[str, list] = {}
+    for t in repo.shared_message_turns():
+        groups.setdefault(_msg_id(t.id, t.session_id), []).append(t)
+    exact = {m: g for m, g in groups.items() if len({_exact_copy_key(t) for t in g}) == 1}
+    if not exact:
+        return 0
+
+    def parse(ts: str) -> datetime:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+
+    sessions = {t.session_id for g in exact.values() for t in g}
+    first_own: dict[str, datetime | None] = {}
+    for sid in sessions:
+        own = [parse(t.timestamp) for t in repo.get_turns_for_session(sid)
+               if _msg_id(t.id, sid) not in groups]
+        first_own[sid] = min(own) if own else None
+
+    def rank(sid: str) -> tuple:
+        fo = first_own[sid]
+        return (fo is None, fo or datetime.min.replace(tzinfo=timezone.utc), sid)
+
+    drops: dict[str, list[str]] = {}
+    keepers: dict[str, set[str]] = {}
+    for msg, g in exact.items():
+        keeper = min({t.session_id for t in g}, key=rank)
+        for t in g:
+            if t.session_id != keeper:
+                drops.setdefault(t.session_id, []).append(msg)
+                keepers.setdefault(t.session_id, set()).add(keeper)
+
+    for sid, msgs in sorted(drops.items()):
+        tool_ids = repo.shared_tool_use_ids(sid, sorted(keepers[sid]))
+        with repo.transaction():
+            repo.delete_duplicated_turns(sid, msgs, tool_ids)
+            recompute_stored_session(repo, sid, table.version)
+    logger.info(
+        "Removed %d copied messages from %d sessions (same API message stored under "
+        "several sessions).", sum(map(len, drops.values())), len(drops),
+    )
+    return len(drops)
 
 
 def _repair_fork_duplicates_once(
