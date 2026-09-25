@@ -105,3 +105,24 @@ def test_cli_work_scan_and_status(tmp_path):
     assert r.exit_code == 0 and "1 repo" in r.output
     r = CliRunner().invoke(app, ["work", "status", "--data-dir", str(data)])
     assert r.exit_code == 0 and "proj" in r.output
+
+
+def test_archived_session_without_transcript_is_mapped_and_linked(tmp_path):
+    """Review I-3: sessions whose transcript Claude Code already deleted exist only in
+    argus.db. They were never mapped to a repo (mapping came only from transcripts), so
+    the archive's history showed no cost/turns and got no links, contradicting spec §11."""
+    from argus.store.repository import normalize_project_path
+
+    repo = make_repo(tmp_path / "proj")
+    data = tmp_path / "data"
+    r = Repository(open_db(data / "argus.db"))
+    sid = "claude_code:archived-0000"
+    r.upsert_session(session_factory(sid, "2026-09-01T04:20:00Z", project_path=normalize_project_path(str(repo))))
+    r.upsert_turn(turn_factory(f"{sid}:m1", sid, "2026-09-01T04:20:00Z"))   # 10 min before "feat: first"
+    r.db.close()
+    (tmp_path / ".claude" / "projects").mkdir(parents=True)                    # no transcripts at all
+    run_pass(data, ClaudeCodeAdapter(tmp_path / ".claude"), now_iso="2026-09-05T00:00:00Z")
+    conn = open_work_db(data)
+    assert conn.execute("SELECT repo_id FROM session_repo WHERE session_id = ?", (sid,)).fetchone()[0] is not None
+    link = conn.execute("SELECT evidence FROM session_commits WHERE session_id = ?", (sid,)).fetchone()
+    assert link is not None and link[0] == "inferred"

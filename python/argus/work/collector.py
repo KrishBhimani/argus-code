@@ -29,7 +29,21 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _seed_archived_sessions(conn) -> None:
+    """Sessions that exist only in the archive (Claude Code already deleted their
+    transcript) get their folder from argus.db's stored project path (read-only)."""
+    if not conn.execute("SELECT 1 FROM pragma_database_list WHERE name = 'core'").fetchone():
+        return
+    conn.execute(
+        """INSERT INTO session_repo (session_id, repo_id, cwd, git_branch)
+           SELECT s.id, NULL, s.project_path, NULL FROM core.sessions s
+           WHERE s.id LIKE 'claude_code:%' AND instr(s.id, '/') = 0 AND s.project_path != ''
+             AND s.id NOT IN (SELECT session_id FROM session_repo)"""
+    )
+
+
 def _map_sessions(conn) -> None:
+    _seed_archived_sessions(conn)
     known = {normalize_project_path(r["root"]): r["id"] for r in conn.execute("SELECT id, root FROM repos")}
     for s in conn.execute("SELECT session_id, cwd FROM session_repo WHERE repo_id IS NULL AND cwd IS NOT NULL").fetchall():
         root = gitscan.repo_root(s["cwd"])
