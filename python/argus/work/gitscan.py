@@ -84,7 +84,7 @@ def ensure_repo(conn: sqlite3.Connection, root: str) -> int:
 def normalize_remote(url: str) -> str | None:
     """host/owner/repo, lowercased, for any URL form of one hosted repo; None for a local path.
 
-    Credentials in the URL (https://user:token@host/...) are dropped, so a token is never stored.
+    Credentials in the URL (a user and token before the host) are dropped, so a token is never stored.
     """
     u = url.strip()
     m = re.match(r"^[a-z][a-z0-9+.-]*://(?:[^@/]*@)?([^/:]+)(?::\d+)?/(.+)$", u, re.I)

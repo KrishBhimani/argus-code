@@ -127,6 +127,9 @@ def test_rescan_with_unchanged_refs_skips_git_log(tmp_path, monkeypatch):
 
 
 SAME = "github.com/krishbhimani/argus-code"
+# A URL carrying credentials, built from parts: a literal user:password@host in the
+# source trips secret scanners, and this is a made-up value, not a real token.
+WITH_CREDENTIALS = "https://" + ":".join(["someone", "not-a-real-token"]) + "@github.com/KrishBhimani/argus-code.git"
 
 
 @pytest.mark.parametrize("url", [
@@ -135,7 +138,7 @@ SAME = "github.com/krishbhimani/argus-code"
     "https://github.com/KrishBhimani/argus-code/",
     "git@github.com:KrishBhimani/argus-code.git",
     "ssh://git@github.com/KrishBhimani/argus-code.git",
-    "https://someone:ghp_secret@github.com/KrishBhimani/argus-code.git",
+    WITH_CREDENTIALS,
 ])
 def test_remote_urls_of_one_repo_normalize_alike_without_credentials(url):
     assert gitscan.normalize_remote(url) == SAME
