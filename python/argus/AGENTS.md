@@ -39,6 +39,26 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   guard, `daemon start`, `argus start` read-only mode) use `running_pid`, which
   also counts UNVERIFIED and tells the user how to clear it. The Windows branch
   is unit-tested with a fake `kernel32`, not exercised on Windows in CI.
+- `work/` — **trial** (opt-in `argus start --work`, `argus work scan|status`): local git
+  history + transcript facts the pipeline skips, session↔commit links labelled
+  `exact`/`coauthored`/`inferred`, and `/api/work/*`. Writes only
+  `<data_dir>/work.db`; `argus.db` is reached solely through a read-only `ATTACH`
+  (asserted by `tests/work/test_isolation.py`). Nothing imports it unless the flag is
+  on. Removal = delete this package, `features/work/`, two routes, and `work.db`.
+  A **project is a repo, not a folder**: `repos` has one row per folder, and folders
+  sharing `project_key` (normalized `origin` URL → else first commit → else the path;
+  credentials stripped) are one project. Queries resolve any folder id to the whole
+  group and count each commit sha once, keeping the strongest link. Columns added
+  after the first trial build are added in `open_work_db` only when missing.
+  Time comes from one source per session, best first: `measured` (transcript
+  `turn_duration`), `estimated` (transcript gaps), `archive` (argus.db turn gaps, for
+  sessions whose transcript is gone; same 5-min cap). Such sessions are titled from
+  the prompt nearest their start (`title_source = 'prompt'`, placeholders stripped);
+  transcript titles always win. Tokens and cost always come from argus.db turns.
+  A measured turn over `LONG_TURN_MS` (1 h) is wall clock with waiting in it, so the
+  transcript gap estimate inside that turn is counted instead. A story cut by the
+  range carries `whole` (the session's end-to-end totals). PR tags are kept only when
+  their repository matches the project's remote.
 - `detectors/` — alert detectors: the registry, the shared helpers in `base.py`,
   and one module per rule (`tool_error_rate_spike`, `cost_spike`, `cache_hit_drop`).
 - `pricing/` — pricing table load / refresh / compute; bundled JSON under repo `pricing/`.
