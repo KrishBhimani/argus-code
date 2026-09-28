@@ -64,6 +64,8 @@ const Thread = z.object({
   commits: z.number(), prs: z.array(z.number()), session_ids: z.array(z.string()), remote_as_of: z.string().nullable(),
 });
 export const WorkThreads = z.object({ open: z.array(Thread), counts: Outcomes, remote_as_of: z.string().nullable() });
+export const WorkGithub = z.object({ enabled: z.boolean(), checked_at: z.string().nullable(), last_error: z.string().nullable(), gh_available: z.boolean() });
+export type WorkGithubT = z.infer<typeof WorkGithub>;
 export type ThreadStateT = z.infer<typeof ThreadState>;
 export type WorkThread = z.infer<typeof Thread>;
 
@@ -80,12 +82,22 @@ async function get<T>(path: string, schema: z.ZodType<T, z.ZodTypeDef, unknown>)
   const json = await r.json();
   return VALIDATE ? schema.parse(json) : (json as T);
 }
+async function post<T>(path: string, schema: z.ZodType<T, z.ZodTypeDef, unknown>): Promise<T> {
+  const r = await fetch(path, { method: 'POST', headers: { Accept: 'application/json' } });
+  if (!r.ok) throw new Error(`${path} → ${r.status}`);
+  const json = await r.json();
+  return VALIDATE ? schema.parse(json) : (json as T);
+}
 const qs = (p: Record<string, string | number | undefined>) =>
   new URLSearchParams(Object.entries(p).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])).toString();
 
 export const workApi = {
   status: () => get('/api/work/status', WorkStatus),
   projects: (days = 30) => get(`/api/work/projects?${qs({ days, tz: tzOffsetMin() })}`, WorkProjects),
+  github: () => get('/api/work/github', WorkGithub),
+  githubEnable: () => post('/api/work/github/enable', WorkGithub),
+  githubDisable: () => post('/api/work/github/disable', WorkGithub),
+  githubRefresh: () => post('/api/work/github/refresh', WorkGithub),
   threads: (days = 30) => get(`/api/work/threads?${qs({ days, tz: tzOffsetMin() })}`, WorkThreads),
   overview: (repo: number, r: Range, scope: Scope) => get(`/api/work/projects/${repo}/overview?${qs({ ...r, scope, tz: tzOffsetMin() })}`, WorkOverview),
   timeline: (repo: number, r: Range, f: { kind: string; branch?: string; scope: Scope }) =>
@@ -99,6 +111,7 @@ export const useWorkStatus = () => {
 };
 export const useWorkProjects = (days = 30) =>
   useQuery({ queryKey: ['work', 'projects', days, tzOffsetMin()], queryFn: () => workApi.projects(days) });
+export const useWorkGithub = () => useQuery({ queryKey: ['work', 'github'], queryFn: workApi.github });
 export const useWorkThreads = (days = 30) =>
   useQuery({ queryKey: ['work', 'threads', days, tzOffsetMin()], queryFn: () => workApi.threads(days) });
 export const useWorkOverview = (repo: number, r: Range, scope: Scope) =>
