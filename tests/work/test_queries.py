@@ -246,3 +246,21 @@ def test_stories_list_their_sessions_and_commits(tmp_path):
     assert sess["model"] == "claude-opus-4-7" and sess["active_ms"] == 3_600_000
     items = [i for d in queries.timeline(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z")["days"] for i in d["items"]]
     assert {i["session_id"]: i["output_tokens"] for i in items if i["kind"] == "session"} == {"claude_code:A": 200, "claude_code:B": 200}
+
+
+def _count_statements(conn, fn, needle: str) -> int:
+    """How many SQL statements containing `needle` ran during fn()."""
+    seen: list[str] = []
+    conn.set_trace_callback(seen.append)
+    try:
+        fn()
+    finally:
+        conn.set_trace_callback(None)
+    return sum(needle in s for s in seen)
+
+
+def test_skill_lookup_is_one_query_whatever_the_session_count(tmp_path):
+    conn = _world(tmp_path)
+    run = lambda: queries.overview(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z")  # noqa: E731
+    # one grouped query for per-session skills + the existing skill_cost breakdown
+    assert _count_statements(conn, run, "turn_attribution") == 2

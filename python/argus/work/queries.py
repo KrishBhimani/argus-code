@@ -256,14 +256,19 @@ def _summaries(conn, rids, ids, frm, to, scope) -> list[SessionSummary]:
             commits_by_sid.setdefault(c["session_id"], []).append(
                 {"sha": c["sha"], "subject": c["subject"], "evidence": c["evidence"],
                  "added": c["added"], "deleted": c["deleted"], "files": c["files"]})
+    # One grouped query: one per session scanned turns x attribution again for every session (3 s on a busy repo).
+    skills_by_sid: dict[str, list[str]] = {}
+    if by_sid:
+        for r in conn.execute(
+            f"""SELECT {_ROOT} AS sid, ta.skill FROM turn_attribution ta JOIN core.turns t ON t.id = ta.turn_id
+                WHERE ta.skill IS NOT NULL AND {_ROOT} IN ({_in(list(by_sid))}) AND t.timestamp >= ? AND t.timestamp < ?
+                GROUP BY sid, ta.skill""", [*by_sid, frm, to]):
+            skills_by_sid.setdefault(r["sid"], []).append(r["skill"])
     out = []
     for sid, ts in by_sid.items():
-        facts = conn.execute("SELECT title FROM session_facts WHERE session_id = ?", (sid,)).fetchone()
+        facts =conn.execute("SELECT title FROM session_facts WHERE session_id = ?", (sid,)).fetchone()
         branch = conn.execute("SELECT git_branch FROM session_repo WHERE session_id = ?", (sid,)).fetchone()["git_branch"]
-        skills = [r["skill"] for r in conn.execute(
-            f"""SELECT DISTINCT ta.skill FROM turn_attribution ta JOIN core.turns t ON t.id = ta.turn_id
-                WHERE ta.skill IS NOT NULL AND {_ROOT} = ? AND t.timestamp >= ? AND t.timestamp < ?""",
-            (sid, frm, to))]
+        skills = skills_by_sid.get(sid, [])
         prs = [r["pr_number"] for r in conn.execute(
             """SELECT pr_number FROM session_prs WHERE session_id = ? AND pr_number IS NOT NULL
                AND (? IS NULL OR pr_repository IS NULL OR lower(pr_repository) = ?)""", (sid, slug, slug))]
