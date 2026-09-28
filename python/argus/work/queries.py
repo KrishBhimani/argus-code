@@ -1,6 +1,7 @@
 """Read-only queries for /api/work/*. argus.db is reached only as the attached `core` schema."""
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -121,20 +122,20 @@ def _commits(conn, rids: list[int], frm: str, to: str, scope: str) -> list[dict]
     best: dict[str, dict] = {}
     reach: dict[str, tuple] = {}
     for row in conn.execute(
-        f"""SELECT c.*, sc.session_id, sc.evidence, cr.on_default, cr.pushed, cr.reachable FROM commits c
+        f"""SELECT c.*, sc.session_id, sc.evidence, cr.on_default, cr.pushed, cr.reachable, cr.landed FROM commits c
             LEFT JOIN session_commits sc ON sc.repo_id = c.repo_id AND sc.sha = c.sha
             LEFT JOIN commit_reach cr ON cr.repo_id = c.repo_id AND cr.sha = c.sha
             WHERE c.repo_id IN ({_in(rids)}) AND c.authored_at >= ? AND c.authored_at < ?
             ORDER BY c.repo_id""", [*rids, frm, to]):
         r = dict(row)
-        o, p, a = reach.get(r["sha"], (None, None, None))
-        reach[r["sha"]] = (_max(o, r["on_default"]), _max(p, r["pushed"]), _max(a, r["reachable"]))
+        o, p, a, s = reach.get(r["sha"], (None, None, None, None))
+        reach[r["sha"]] = (_max(o, r["on_default"]), _max(p, r["pushed"]), _max(a, r["reachable"]), _max(s, r["landed"]))
         seen = best.get(r["sha"])
         if seen is None or _EVIDENCE_RANK[r["evidence"]] < _EVIDENCE_RANK[seen["evidence"]]:
             best[r["sha"]] = r
     rows = sorted(best.values(), key=lambda r: (r["authored_at"], r["sha"]))
     for r in rows:
-        r["on_default"], r["pushed"], r["reachable"] = reach[r["sha"]]
+        r["on_default"], r["pushed"], r["reachable"], r["landed"] = reach[r["sha"]]
     if scope == "all":
         return rows
     mine = set().union(*(mine_emails(conn, rid) for rid in rids))
@@ -286,7 +287,8 @@ def _summaries(conn, rids, ids, frm, to, scope) -> list[SessionSummary]:
             commits_by_sid.setdefault(c["session_id"], []).append(
                 {"sha": c["sha"], "subject": c["subject"], "evidence": c["evidence"],
                  "added": c["added"], "deleted": c["deleted"], "files": c["files"],
-                 "on_default": c["on_default"], "pushed": c["pushed"], "reachable": c["reachable"]})
+                 "on_default": c["on_default"], "pushed": c["pushed"], "reachable": c["reachable"],
+                 "landed": c["landed"]})
     # One grouped query: one per session scanned turns x attribution again for every session (3 s on a busy repo).
     skills_by_sid: dict[str, list[str]] = {}
     if by_sid:
@@ -341,9 +343,13 @@ def _landed_prs(conn, rids: list[int]) -> set[int]:
 def _stateful(conn, stories: list[dict], now_iso: str, rids: list[int]) -> list[dict]:
     """Give each story its state; the newest story per folder alone may claim that folder's
     uncommitted changes. A folder that is gone has nothing uncommitted."""
-    landed = _landed_prs(conn, rids)
-    folders = {r["id"]: {**dict(r), "landed_prs": landed} for r in conn.execute(
-        "SELECT id, last_error, default_ref, dirty, present, remote_as_of FROM repos")}
+    from . import github
+    slug = _repo_slug(conn, rids)
+    extra = {"landed_prs": _landed_prs(conn, rids), "pr_states": github.pr_states(conn, slug) if slug else {},
+             "github_on": github.is_enabled(conn)}
+    folders = {r["id"]: {**dict(r), **extra, "merged_branches": json.loads(r["merged_branches"] or "[]")}
+               for r in conn.execute(
+                   "SELECT id, last_error, default_ref, dirty, present, remote_as_of, merged_branches FROM repos")}
     newest: dict[int, str] = {}
     for s in stories:
         if s["repo_id"] is not None and s["last_ts"] > newest.get(s["repo_id"], ""):

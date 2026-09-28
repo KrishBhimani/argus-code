@@ -64,7 +64,7 @@ def _story(group: list[SessionSummary]) -> dict:
                           "active_estimated": s.active_estimated} for s in group],
         "commit_list": [{"sha": c["sha"], "subject": c.get("subject", ""), "evidence": c["evidence"],
                          "on_default": c.get("on_default"), "pushed": c.get("pushed"),
-                         "reachable": c.get("reachable")} for c in commits],
+                         "reachable": c.get("reachable"), "landed": c.get("landed")} for c in commits],
         "first_ts": group[0].first_ts,
         "last_ts": max(s.last_ts for s in group),
         "commits": {"total": len(commits), **ev},

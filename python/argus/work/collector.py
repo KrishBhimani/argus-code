@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..store.repository import normalize_project_path
-from . import gitscan
+from . import github, gitscan
 from .db import open_work_db, set_meta
 from .facts import GAP_CAP_MS, collect_facts
 from .linker import link_repo
@@ -154,6 +154,11 @@ def run_pass(data_dir: Path, adapter, now_iso: str | None = None) -> PassResult:
                     res.errors[r["root"]] = str(e)
             for k, v in link_repo(conn, r["id"]).items():
                 res.links[k] += v
+        try:   # opt-in; does nothing unless on and 30 min have passed since the last check
+            github.maybe_refresh(conn, now)
+        except Exception as e:  # noqa: BLE001  never stop the pass
+            logger.warning("work: github refresh failed: %s", e)
+            res.errors["github"] = str(e)
         set_meta(conn, "last_scan_at", now)
     finally:
         conn.close()

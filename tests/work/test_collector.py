@@ -183,3 +183,13 @@ def test_prompt_titles_skip_paste_and_image_placeholders(tmp_path):
     run_pass(data, adapter, now_iso="2026-09-05T00:00:00Z")
     conn = open_work_db(data)
     assert conn.execute("SELECT title FROM session_facts WHERE session_id = ?", (sid,)).fetchone()[0] == "the window shows 235m"
+
+
+def test_the_scan_asks_github_only_through_maybe_refresh(tmp_path, monkeypatch):
+    from argus.work import github
+    repo = make_repo(tmp_path / "proj")
+    data, adapter = _world(tmp_path, repo)
+    asked: list = []
+    monkeypatch.setattr(github, "maybe_refresh", lambda conn, now: asked.append(now))
+    run_pass(data, adapter, now_iso="2026-09-05T00:00:00Z")
+    assert asked == ["2026-09-05T00:00:00Z"]

@@ -240,7 +240,8 @@ def test_stories_list_their_sessions_and_commits(tmp_path):
     conn = _world(tmp_path)
     o = queries.overview(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z")
     a = next(s for s in o["stories"] if s["title"] == "Build A")
-    assert a["commit_list"] == [{"sha": "abc1234", "subject": "feat: a", "evidence": "exact", "on_default": None, "pushed": None, "reachable": None}]
+    assert [{k: c[k] for k in ("sha", "subject", "evidence")} for c in a["commit_list"]] == [
+        {"sha": "abc1234", "subject": "feat: a", "evidence": "exact"}]
     (sess,) = a["session_list"]
     assert sess["session_id"] == "claude_code:A" and sess["title"] == "Build A" and sess["turns"] == 1
     assert sess["model"] == "claude-opus-4-7" and sess["active_ms"] == 3_600_000
@@ -364,3 +365,27 @@ def test_project_outcomes_match_home_counts_when_a_thread_spans_the_period_start
     t = queries.threads(conn, now_iso=now, days=7)
     assert p["outcomes"] == t["counts"]
     assert p["outcomes"]["shipped"] == 1          # A's Sep 10 commit is on main, whatever the period
+
+
+def test_github_answers_and_release_branches_reach_thread_states(tmp_path):
+    conn = _world(tmp_path)
+    _git_facts(conn)
+    conn.execute("UPDATE repos SET project_key = 'remote:github.com/o/r', merged_branches = '[\"main-release\"]' WHERE id = 1")
+    conn.execute("UPDATE session_repo SET git_branch = 'main-release' WHERE session_id = 'claude_code:B'")
+    conn.execute("INSERT INTO session_prs VALUES ('claude_code:B', 'https://github.com/o/r/pull/12', 12, 'o/r', NULL)")
+    by = lambda: {s["title"]: s for s in queries.overview(  # noqa: E731
+        conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z", now_iso="2026-09-22T00:00:00Z")["stories"]}
+    assert by()["Fix B"]["reason"] == "PR #12 merged (main-release is in main)"
+    conn.execute("UPDATE repos SET merged_branches = '[]' WHERE id = 1")
+    conn.execute("INSERT INTO pr_status VALUES ('o/r', 12, 'CLOSED', NULL, '2026-09-21T00:00:00Z')")
+    conn.execute("INSERT INTO meta VALUES ('github_enabled', '1')")
+    assert (by()["Fix B"]["state"], by()["Fix B"]["reason"]) == ("dropped", "PR #12 closed without merging")
+
+
+def test_squash_landed_commits_ship_their_thread(tmp_path):
+    conn = _world(tmp_path)
+    _git_facts(conn)
+    conn.execute("UPDATE commit_reach SET on_default = 0, landed = 1 WHERE sha = 'abc1234'")
+    by = {s["title"]: s for s in queries.overview(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z",
+                                                   now_iso="2026-09-22T00:00:00Z")["stories"]}
+    assert (by["Build A"]["state"], by["Build A"]["reason"]) == ("shipped", "1 commit on main")
