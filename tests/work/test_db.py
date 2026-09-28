@@ -10,7 +10,7 @@ from argus.work.db import get_meta, open_work_db, set_meta
 
 TABLES = {"meta", "repos", "commits", "commit_files", "session_repo", "session_facts",
           "active_spans", "session_prs", "turn_attribution", "commit_claims",
-          "session_commits", "file_offsets", "commit_reach"}
+          "session_commits", "file_offsets", "commit_reach", "pr_status"}
 
 
 def _snapshot(path):
@@ -103,4 +103,18 @@ def test_an_early_commit_reach_gains_reachable_without_losing_rows(tmp_path):
     c.close()
     conn = open_work_db(tmp_path)
     assert tuple(conn.execute("SELECT sha, on_default, pushed, reachable FROM commit_reach").fetchone()) == ("abc", 1, 1, None)
+    conn.close()
+
+
+def test_pr_status_and_new_columns_arrive_on_an_existing_db(tmp_path):
+    open_work_db(tmp_path).close()
+    c = sqlite3.connect(tmp_path / "work.db")
+    c.execute("DROP TABLE IF EXISTS pr_status")
+    c.commit()
+    c.close()
+    conn = open_work_db(tmp_path)
+    conn.execute("INSERT INTO pr_status VALUES ('o/r', 7, 'MERGED', '2026-09-01T00:00:00Z', '2026-09-02T00:00:00Z')")
+    assert conn.execute("SELECT state FROM pr_status").fetchone()[0] == "MERGED"
+    assert "landed" in {r["name"] for r in conn.execute("SELECT name FROM pragma_table_info('commit_reach')")}
+    assert "merged_branches" in {r["name"] for r in conn.execute("SELECT name FROM pragma_table_info('repos')")}
     conn.close()
