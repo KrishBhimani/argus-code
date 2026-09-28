@@ -1,6 +1,7 @@
 """Read-only queries for /api/work/*. argus.db is reached only as the attached `core` schema."""
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
@@ -319,10 +320,29 @@ def _has_core(conn) -> bool:
     return conn.execute("SELECT 1 FROM pragma_database_list WHERE name = 'core'").fetchone() is not None
 
 
-def _stateful(conn, stories: list[dict], now_iso: str) -> list[dict]:
+_SQUASH_PR = re.compile(r"\(#(\d+)\)\s*$")          # GitHub squash merge: "Title (#191)"
+_MERGE_PR = re.compile(r"^Merge pull request #(\d+)(?!\d)")
+
+
+def _landed_prs(conn, rids: list[int]) -> set[int]:
+    """PR numbers merged into this project's default branch, read from its commit subjects.
+    Scoped to the project: the same number on another repo's main is another PR."""
+    out: set[int] = set()
+    for r in conn.execute(
+        f"""SELECT c.subject FROM commits c JOIN commit_reach cr ON cr.repo_id = c.repo_id AND cr.sha = c.sha
+            WHERE c.repo_id IN ({_in(rids)}) AND cr.on_default = 1
+              AND (c.subject GLOB '*(#[0-9]*)*' OR c.subject LIKE 'Merge pull request #%')""", rids):
+        m = _SQUASH_PR.search(r["subject"]) or _MERGE_PR.match(r["subject"])
+        if m:
+            out.add(int(m.group(1)))
+    return out
+
+
+def _stateful(conn, stories: list[dict], now_iso: str, rids: list[int]) -> list[dict]:
     """Give each story its state; the newest story per folder alone may claim that folder's
     uncommitted changes. A folder that is gone has nothing uncommitted."""
-    folders = {r["id"]: dict(r) for r in conn.execute(
+    landed = _landed_prs(conn, rids)
+    folders = {r["id"]: {**dict(r), "landed_prs": landed} for r in conn.execute(
         "SELECT id, last_error, default_ref, dirty, present, remote_as_of FROM repos")}
     newest: dict[int, str] = {}
     for s in stories:
@@ -339,7 +359,7 @@ def _stateful(conn, stories: list[dict], now_iso: str) -> list[dict]:
 
 def _project_stories(conn, rids: list[int], frm: str, to: str, now_iso: str) -> list[dict]:
     gap = float(get_meta(conn, "story_gap_days") or 2)
-    return _stateful(conn, group_stories(_summaries(conn, rids, _sessions(conn, rids), frm, to, "mine"), gap), now_iso)
+    return _stateful(conn, group_stories(_summaries(conn, rids, _sessions(conn, rids), frm, to, "mine"), gap), now_iso, rids)
 
 
 def _bucket(state: str) -> str | None:
@@ -424,7 +444,7 @@ def overview(conn: sqlite3.Connection, repo_id: int, frm: str, to: str, scope: s
         "tiles": tiles, "prior": prior,
         "daily": {"days": days, "active_ms": list(active_d.values()), "commits": list(commits_d.values()),
                   "output_tokens": list(tokens_d.values()), "cost": list(cost_d.values())},
-        "stories": _stateful(conn, group_stories(summaries, gap), now_iso or to),
+        "stories": _stateful(conn, group_stories(summaries, gap), now_iso or to, rids),
         "breakdowns": {
             "branches": top(branch_cost, 6),
             "skills": [{"name": k, "value": v / total_cost} for k, v in sorted(skill_cost.items(), key=lambda kv: -kv[1])[:6]],

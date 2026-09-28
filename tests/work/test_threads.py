@@ -36,6 +36,12 @@ CASES = [
     ("dropped past 7 days", story([(0, 1)], last_ts="2026-09-21T11:00:00Z"), {}, True,
      "dropped", "quiet for 8 days, not on main"),
     ("in progress", story([(0, 1), (0, 1)]), {}, True, "in_progress", "2 commits on feat/x"),
+    # Squash merges put a new commit on main: the thread's own commits never reach it.
+    ("squash-merged PR", story([(0, 0), (0, 0)], prs=[3, 191]), {"landed_prs": {191}}, True,
+     "shipped", "PR #191 merged into main"),
+    ("squash-merged PR, branch deleted", story([(0, 0)], prs=[191], last_ts="2026-09-01T10:00:00Z"),
+     {"landed_prs": {191}}, True, "shipped", "PR #191 merged into main"),
+    ("another PR landed, not this one", story([(0, 1)], prs=[212]), {"landed_prs": {191}}, True, "pr_open", "PR #212 open"),
 ]
 
 

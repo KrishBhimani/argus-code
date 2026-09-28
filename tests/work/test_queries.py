@@ -313,3 +313,40 @@ def test_threads_without_the_archive_are_empty(tmp_path):
     conn = open_work_db(tmp_path)                # no argus.db: nothing attached as core
     assert queries.threads(conn, now_iso="2026-09-22T00:00:00Z") == {
         "open": [], "counts": {"shipped": 0, "open": 0, "dropped": 0}, "remote_as_of": None}
+
+
+def _squash(conn, repo_id: int, sha: str, subject: str) -> None:
+    conn.execute("INSERT INTO commits VALUES (?, ?, 'Me', 'me@x', '2026-09-21T10:00:00Z', '2026-09-21T10:00:00Z', ?, 1, 0, 9, 0, 1)",
+                 (repo_id, sha, subject))
+    conn.execute("INSERT INTO commit_reach VALUES (?, ?, 1, 1)", (repo_id, sha))
+
+
+def test_a_squash_merged_pr_ships_its_thread(tmp_path):
+    conn = _world(tmp_path)
+    _git_facts(conn, dirty=3)
+    conn.execute("INSERT INTO session_prs VALUES ('claude_code:B', 'https://github.com/o/r/pull/7', 7, NULL, NULL)")
+    _squash(conn, 1, "sq00007", "feat: the whole branch, squashed (#7)")
+    o = queries.overview(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z", now_iso="2026-09-22T00:00:00Z")
+    by = {s["title"]: s for s in o["stories"]}
+    assert (by["Fix B"]["state"], by["Fix B"]["reason"]) == ("shipped", "PR #7 merged into main")
+
+
+def test_a_pr_number_on_another_projects_main_does_not_count(tmp_path):
+    conn = _world(tmp_path)
+    _git_facts(conn, dirty=3)
+    conn.execute("INSERT INTO session_prs VALUES ('claude_code:B', 'https://github.com/o/r/pull/8', 8, NULL, NULL)")
+    conn.execute("INSERT INTO repos (id, root, display_name, user_emails, default_ref) VALUES (2, '/other', 'other', '[]', 'refs/heads/main')")
+    _squash(conn, 2, "sq00008", "chore: unrelated (#8)")
+    by = {s["title"]: s for s in queries.overview(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z",
+                                                   now_iso="2026-09-22T00:00:00Z")["stories"]}
+    assert by["Fix B"]["state"] == "pr_open"
+
+
+def test_a_merge_commit_pr_ships_its_thread(tmp_path):
+    conn = _world(tmp_path)
+    _git_facts(conn)
+    conn.execute("INSERT INTO session_prs VALUES ('claude_code:B', 'https://github.com/o/r/pull/9', 9, NULL, NULL)")
+    _squash(conn, 1, "mg00009", "Merge pull request #9 from me/fix-b")
+    by = {s["title"]: s for s in queries.overview(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z",
+                                                   now_iso="2026-09-22T00:00:00Z")["stories"]}
+    assert (by["Fix B"]["state"], by["Fix B"]["reason"]) == ("shipped", "PR #9 merged into main")

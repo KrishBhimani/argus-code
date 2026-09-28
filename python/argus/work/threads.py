@@ -33,6 +33,11 @@ def thread_state(story: dict, folder: dict, now_iso: str, *, newest_in_folder: b
     idle = (_dt(now_iso) - _dt(story["last_ts"])).total_seconds() / 86_400
     if commits and all(c["on_default"] for c in commits):
         return "shipped", f"{_n(len(commits), 'commit')} on {base}"
+    # A squash merge lands a new commit on main, so the thread's own commits never reach it
+    # (and its branch is often deleted): the PR's number on main is the evidence.
+    landed = sorted(set(story["prs"]) & set(folder.get("landed_prs") or ()))
+    if landed:
+        return "shipped", f"PR #{landed[-1]} merged into {base}"
     unpushed = sum(1 for c in commits if c.get("pushed") == 0)   # None = no remote: unknowable, not unpushed
     if unpushed:
         return "not_pushed", f"{_n(unpushed, 'commit')} not pushed"
