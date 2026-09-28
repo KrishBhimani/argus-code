@@ -12,7 +12,7 @@ const base = {
   prior: { active_ms: 0, active_estimated: false, cost: 60, commits: 1, cost_per_commit: 60 },
   daily: { days: ['2026-09-15', '2026-09-16'], active_ms: [0, 0], commits: [1, 2], output_tokens: [10, 20], cost: [1, 2] },
   stories: [
-    story({ key: 'claude_code:open', title: 'Project sharing redesign', state: 'pr_open', reason: 'PR #212 open', last_ts: '2026-09-28T10:00:00Z',
+    story({ key: 'claude_code:open', title: 'Project sharing redesign', state: 'pr_open', reason: 'PR #212 open', first_ts: '2026-09-28T09:00:00Z', last_ts: '2026-09-28T10:00:00Z',
       session_ids: ['claude_code:open'],
       session_list: [{ session_id: 'claude_code:open', title: 'Project sharing redesign', model: 'claude-opus-5-5', turns: 51,
         first_ts: '2026-09-28T09:00:00Z', last_ts: '2026-09-28T10:00:00Z', active_ms: 600_000, active_estimated: false }] }),
@@ -22,7 +22,12 @@ const base = {
   ],
   breakdowns: { branches: [], skills: [], files: [] },
 };
-vi.mock('./api', () => ({ useWorkOverview: () => ({ data: base, error: null }) }));
+// A range query would return stories clipped to the range, with states re-derived from the clipped
+// commits: the tab must not use them for thread states.
+const clipped = { ...base, stories: base.stories.map((s) => ({ ...s, state: 'dropped', reason: 'no commit' })) };
+vi.mock('./api', () => ({
+  useWorkOverview: (_r: number, range: { from?: string }) => ({ data: range.from ? clipped : base, error: null }),
+}));
 vi.mock('@tanstack/react-router', () => ({
   Link: (p: { children: React.ReactNode; to: string; params?: unknown }) => <a data-to={p.to} data-params={JSON.stringify(p.params)}>{p.children}</a>,
 }));
@@ -63,4 +68,14 @@ it('keeps the daily chart one click away', () => {
   expect(screen.queryByRole('img', { name: 'Output tokens by day' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: /Daily output/ }));
   expect(screen.getByRole('img', { name: 'Output tokens by day' })).toBeInTheDocument();
+});
+
+it('brushing narrows the threads without changing their states', () => {
+  render(<ThreadsTab repo={1} />);
+  fireEvent.click(screen.getByRole('button', { name: /Daily output/ }));
+  const cols = screen.getAllByTestId('daycol');
+  fireEvent.pointerDown(cols[1]); fireEvent.pointerUp(cols[1]);            // 2026-09-16 only
+  expect(column('Shipped').getByText('grokbot integration')).toBeInTheDocument();
+  expect(column('Shipped').getAllByText('SHIPPED')).toHaveLength(2);
+  expect(screen.queryByText('Project sharing redesign')).not.toBeInTheDocument();   // last active Sep 28
 });

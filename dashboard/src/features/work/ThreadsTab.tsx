@@ -93,7 +93,6 @@ export default function ThreadsTab({ repo, scope = 'mine', days: period = 30, fo
   const base = useWorkOverview(repo, { days: period }, scope);
   const dayList = base.data?.daily.days;
   const range = useMemo(() => selRange(dayList ?? [], sel, tzOffsetMin()), [dayList, sel]);
-  const brushed = useWorkOverview(repo, range, scope);
   const list = useRef<HTMLDivElement>(null);
   // Arriving from Resume: bring the thread into view once loaded.
   useEffect(() => {
@@ -103,8 +102,10 @@ export default function ThreadsTab({ repo, scope = 'mine', days: period = 30, fo
   if (!base.data) return null;
   const { tiles, prior, daily } = base.data;
   const all = base.data.stories;
-  const shown = newest((sel ? brushed.data?.stories : all) ?? []);
-  const loading = sel !== null && !brushed.data && !brushed.error;
+  // A brush narrows to the threads active in those days. Their states stay the ones read over the
+  // whole period: re-reading a range would clip a thread's commits and change its state.
+  const shown = newest(range.from && range.to
+    ? all.filter((s) => s.first_ts < range.to! && s.last_ts >= range.from!) : all);
   // Unknown sits with Open: it needs a look, and is never counted as shipped or dropped.
   const isOpen = (s: StoryT) => OPEN_STATES.has(s.state) || s.state === 'unknown';
   const open = shown.filter(isOpen);
@@ -131,9 +132,8 @@ export default function ThreadsTab({ repo, scope = 'mine', days: period = 30, fo
     columns: ['Day', 'Output tokens', 'Cost', 'Active', 'Commits'],
     rows: daily.days.map((d, i) => [d, tok(daily.output_tokens[i]), usd(daily.cost[i]), hours(daily.active_ms[i]), daily.commits[i]]),
   };
-  const rows = (xs: StoryT[]) => (loading ? <p className="m-0 text-[12px] text-ink-2 p-2">Loading…</p>
-    : xs.length ? xs.map((s) => <ThreadRow key={s.key} s={s} focused={s.key === focus} />)
-      : <p className="m-0 text-[12px] text-ink-2 p-2">None</p>);
+  const rows = (xs: StoryT[]) => (xs.length ? xs.map((s) => <ThreadRow key={s.key} s={s} focused={s.key === focus} />)
+    : <p className="m-0 text-[12px] text-ink-2 p-2">None</p>);
   return (
     <div ref={list} className="flex flex-col gap-4">
       <div role="group" aria-label="Outcomes" className="grid grid-cols-5 rounded-lg border border-line bg-bg-1">
