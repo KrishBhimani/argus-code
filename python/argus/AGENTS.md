@@ -69,6 +69,17 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   newest thread in a folder may claim its uncommitted changes. `/api/work/threads` lists
   open threads (30-day lookback) + period counts. Argus never fetches: remote state is
   as of the user's last fetch (`remote_as_of`, FETCH_HEAD mtime).
+  **Knowing a PR merged:** locally (always on, only when refs move) a squash is matched by
+  content — a branch containing a session commit whose `git patch-id` is on the default
+  branch marks its commits `commit_reach.landed` — and remote branches already in main are
+  kept as `repos.merged_branches` (release PRs fast-forwarded, never the default branch).
+  **GitHub PR status** (`work/github.py`, opt-in, off by default) asks through the user's
+  own `gh` CLI: one batched GraphQL query per `owner/repo` (validated before it reaches a
+  query), answers cached in `pr_status`; MERGED/CLOSED are final and never re-asked. One
+  switch and one clock in `meta` (`github_enabled`, `github_checked_at`): the CLI
+  (`argus work github enable|disable|refresh`), `/api/work/github*` and the scan's
+  `maybe_refresh` (every 30 min when on) all call the same functions; every refresh resets
+  the clock. `gh` is the work trial's only network path; Argus never reads a token.
 - `detectors/` — alert detectors: the registry, the shared helpers in `base.py`,
   and one module per rule (`tool_error_rate_spike`, `cost_spike`, `cache_hit_drop`).
 - `pricing/` — pricing table load / refresh / compute; bundled JSON under repo `pricing/`.

@@ -42,6 +42,8 @@ analyses in `src/lib/analysis/`.
   `?tab=threads&focus=<thread key>` opens and highlights that thread;
   `?tab=activity&focus=<ids>` scrolls to and highlights those sessions. Thread state
   badges come from `fmt.ts` `STATE` and always carry text, never colour alone.
+  Settings shows the GitHub PR status panel (`features/work/GithubPanel.tsx`) only when
+  the trial is on; it calls the same `/api/work/github*` as `argus work github …`.
   Commit evidence is shown in plain words via `fmt.ts` `EVIDENCE` (exact → made here,
   coauthored → Claude co-author, inferred → likely); keep that mapping in one place.
 - **SPA routing.** Deep links (`/sessions/<id>`) are served by the `index.html`
