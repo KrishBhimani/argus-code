@@ -55,7 +55,9 @@ def thread_state(story: dict, folder: dict, now_iso: str, *, newest_in_folder: b
         return "dropped", f"PR #{max(story['prs'])} closed without merging"
     if story["prs"]:
         open_prs = [p for p in story["prs"] if gh.get(p) != "CLOSED"]
-        hint = "" if folder.get("github_on") else " · from git; turn on GitHub check for exact status"
+        # Say it is a guess only when it is one: no GitHub answer for this PR and checking is off.
+        answered = gh.get(max(open_prs)) is not None
+        hint = "" if folder.get("github_on") or answered else " · from git; turn on GitHub check for exact status"
         return "pr_open", f"PR #{max(open_prs)} open{hint}"
     if not commits:
         if newest_in_folder and (folder.get("dirty") or 0) > 0 and idle <= DROP_DAYS:

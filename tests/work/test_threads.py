@@ -64,6 +64,9 @@ CASES = [
     ("one closed, one open", story([(0, 1)], prs=[9, 10]), {"pr_states": {9: "CLOSED", 10: "OPEN"}, "github_on": True},
      True, "pr_open", "PR #10 open"),
     ("github on: no hint", story([(0, 1)], prs=[3]), {"github_on": True}, True, "pr_open", "PR #3 open"),
+    # The hint is about the answer, not the switch: a one-off refresh answered this PR.
+    ("github answered open while the switch is off: no hint", story([(0, 1)], prs=[193]),
+     {"pr_states": {193: "OPEN"}}, True, "pr_open", "PR #193 open"),
 ]
 
 
