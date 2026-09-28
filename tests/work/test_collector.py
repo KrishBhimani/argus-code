@@ -46,6 +46,8 @@ def test_end_to_end_pass_links_the_coauthored_commit(tmp_path):
     conn = open_work_db(data)
     links = {r["evidence"] for r in conn.execute("SELECT evidence FROM session_commits")}
     assert links == {"coauthored"}   # "fix: second" 09:30Z, 10 min after the 09:20Z turn
+    assert conn.execute("SELECT COUNT(*) FROM commit_reach").fetchone()[0] == 3
+    assert conn.execute("SELECT default_ref FROM repos").fetchone()[0] == "refs/heads/main"
 
 
 def test_session_cwd_in_subdir_maps_to_repo(tmp_path):

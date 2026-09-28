@@ -148,6 +148,7 @@ def run_pass(data_dir: Path, adapter, now_iso: str | None = None) -> PassResult:
             else:
                 try:
                     res.commits += gitscan.scan_repo(conn, r["id"], r["root"], now)
+                    gitscan.refresh_git_state(conn, r["id"], r["root"], now)
                 except gitscan.GitError as e:
                     conn.execute("UPDATE repos SET last_error = ? WHERE id = ?", (str(e), r["id"]))
                     res.errors[r["root"]] = str(e)

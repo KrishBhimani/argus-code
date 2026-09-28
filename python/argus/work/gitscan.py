@@ -215,3 +215,70 @@ def scan_repo(conn: sqlite3.Connection, repo_id: int, root: str, now_iso: str) -
         conn.execute("ROLLBACK")
         raise
     return len(commits)
+
+
+def default_ref(root: str) -> str | None:
+    """The branch work lands on: origin/HEAD when set, else local main, else local master."""
+    try:
+        ref = run_git(["symbolic-ref", "-q", "refs/remotes/origin/HEAD"], root, timeout=15).strip()
+        if ref:
+            return ref
+    except GitError:   # not a symbolic ref: no origin, or origin/HEAD never set
+        pass
+    for name in ("refs/heads/main", "refs/heads/master"):
+        try:
+            run_git(["rev-parse", "--verify", "-q", name], root, timeout=15)
+            return name
+        except GitError:
+            continue
+    return None
+
+
+def dirty_count(root: str) -> int:
+    """Changed or untracked files in this folder (each worktree has its own)."""
+    return sum(1 for line in run_git(["status", "--porcelain"], root, timeout=15).splitlines() if line.strip())
+
+
+def remote_as_of(root: str) -> str | None:
+    """When this repo last fetched (FETCH_HEAD's mtime in the shared git dir), else None.
+
+    Argus never fetches: pushed / shipped are only as fresh as the user's last fetch or pull."""
+    common = Path(run_git(["rev-parse", "--git-common-dir"], root, timeout=15).strip())
+    head = (common if common.is_absolute() else Path(root) / common) / "FETCH_HEAD"
+    if not head.exists():
+        return None
+    return datetime.fromtimestamp(head.stat().st_mtime, timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def refresh_git_state(conn: sqlite3.Connection, repo_id: int, root: str, now_iso: str) -> None:
+    """Per stored commit: on the default branch? on any remote? Re-read only when refs moved
+    (a fast-forward merge moves them without new commits) or rows are missing. The folder's
+    dirty count and last fetch time are read every pass. Raises GitError; the caller records it."""
+    row = conn.execute("SELECT ref_tips, reach_tips FROM repos WHERE id = ?", (repo_id,)).fetchone()
+    missing = conn.execute(
+        """SELECT 1 FROM commits c WHERE c.repo_id = ? AND NOT EXISTS
+             (SELECT 1 FROM commit_reach r WHERE r.repo_id = c.repo_id AND r.sha = c.sha) LIMIT 1""",
+        (repo_id,)).fetchone()
+    ref = default_ref(root)
+    remote = bool(run_git(["remote"], root, timeout=15).strip())
+    dirty, fetched = dirty_count(root), remote_as_of(root)
+    reread = missing is not None or row["reach_tips"] != row["ref_tips"]
+    if reread:   # git runs before the transaction, so no write lock is held while it works
+        on_default = set(run_git(["rev-list", ref], root).split()) if ref else set()
+        pushed = set(run_git(["rev-list", "--remotes"], root).split()) if remote else None
+        shas = [r["sha"] for r in conn.execute("SELECT sha FROM commits WHERE repo_id = ?", (repo_id,))]
+    conn.execute("BEGIN")
+    try:
+        if reread:
+            conn.execute("DELETE FROM commit_reach WHERE repo_id = ?", (repo_id,))
+            conn.executemany("INSERT INTO commit_reach VALUES (?, ?, ?, ?)",
+                             [(repo_id, s, int(s in on_default), None if pushed is None else int(s in pushed))
+                              for s in shas])
+        conn.execute(
+            """UPDATE repos SET default_ref = ?, has_remote = ?, reach_tips = ref_tips, dirty = ?,
+                 dirty_checked_at = ?, remote_as_of = ? WHERE id = ?""",
+            (ref, int(remote), dirty, now_iso, fetched, repo_id))
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise

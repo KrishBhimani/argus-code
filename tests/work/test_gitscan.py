@@ -175,3 +175,98 @@ def test_scan_records_the_project_key(tmp_path):
     rid = gitscan.ensure_repo(conn, str(a).replace("\\", "/"))
     gitscan.scan_repo(conn, rid, str(a), "2026-09-05T00:00:00Z")
     assert conn.execute("SELECT project_key FROM repos WHERE id = ?", (rid,)).fetchone()[0] == "remote:github.com/me/proj"
+
+
+NOW = "2026-09-05T00:00:00Z"
+
+
+def _with_remote(tmp_path: Path) -> Path:
+    repo = make_repo(tmp_path / "proj")
+    bare = tmp_path / "remote.git"
+    git(tmp_path, "init", "-q", "--bare", str(bare))
+    git(repo, "remote", "add", "origin", str(bare))
+    git(repo, "push", "-q", "origin", "main")
+    git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+    return repo
+
+
+def _scan(tmp_path: Path, repo: Path):
+    conn = open_work_db(tmp_path / "data")
+    root = gitscan.repo_root(str(repo))
+    rid = gitscan.ensure_repo(conn, root)
+    gitscan.scan_repo(conn, rid, root, NOW)
+    gitscan.refresh_git_state(conn, rid, root, NOW)
+    return conn, rid, root
+
+
+def _reach(conn) -> dict[str, tuple]:
+    return {r["subject"]: (r["on_default"], r["pushed"]) for r in conn.execute(
+        "SELECT c.subject, r.on_default, r.pushed FROM commits c JOIN commit_reach r USING (repo_id, sha)")}
+
+
+def _commit(repo: Path, name: str, subject: str, date: str = "2026-09-04T10:00:00Z") -> None:
+    (repo / name).write_text(subject + "\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", subject, date=date)
+
+
+def test_reachability_marks_default_and_pushed(tmp_path):
+    repo = _with_remote(tmp_path)
+    git(repo, "switch", "-q", "-c", "feat/x")
+    _commit(repo, "b.py", "feat: local only")
+    conn, rid, _ = _scan(tmp_path, repo)
+    reach = _reach(conn)
+    assert reach["feat: first"] == (1, 1)
+    assert reach["feat: local only"] == (0, 0)
+    row = conn.execute("SELECT default_ref, has_remote, dirty FROM repos WHERE id = ?", (rid,)).fetchone()
+    assert tuple(row) == ("refs/remotes/origin/main", 1, 0)
+
+
+def test_no_remote_leaves_pushed_unknown(tmp_path):
+    repo = make_repo(tmp_path / "proj")
+    conn, rid, _ = _scan(tmp_path, repo)
+    assert set(_reach(conn).values()) == {(1, None)}   # all on local main; pushed unknowable
+    row = conn.execute("SELECT default_ref, has_remote FROM repos WHERE id = ?", (rid,)).fetchone()
+    assert tuple(row) == ("refs/heads/main", 0)
+
+
+def test_fast_forward_merge_refreshes_reachability(tmp_path):
+    repo = _with_remote(tmp_path)
+    git(repo, "switch", "-q", "-c", "feat/x")
+    _commit(repo, "b.py", "feat: branch work")
+    conn, rid, root = _scan(tmp_path, repo)
+    assert _reach(conn)["feat: branch work"] == (0, 0)
+    git(repo, "switch", "-q", "main")
+    git(repo, "merge", "-q", "--ff-only", "feat/x")
+    git(repo, "push", "-q", "origin", "main")
+    assert gitscan.scan_repo(conn, rid, root, NOW) == 0          # no new commits, only refs moved
+    gitscan.refresh_git_state(conn, rid, root, NOW)
+    assert _reach(conn)["feat: branch work"] == (1, 1)
+
+
+def test_dirty_count_includes_untracked_files(tmp_path):
+    repo = make_repo(tmp_path / "proj")
+    (repo / "a.py").write_text("changed\n")
+    (repo / "new.py").write_text("new\n")
+    conn, rid, _ = _scan(tmp_path, repo)
+    assert tuple(conn.execute("SELECT dirty, dirty_checked_at FROM repos WHERE id = ?", (rid,)).fetchone()) == (2, NOW)
+
+
+def test_worktree_has_its_own_dirty_count_and_shares_fetch_time(tmp_path):
+    repo = _with_remote(tmp_path)
+    assert gitscan.remote_as_of(str(repo)) is None                # pushed, never fetched
+    git(repo, "fetch", "-q", "origin")                             # local bare remote: no network
+    wt = tmp_path / "wt"
+    git(repo, "worktree", "add", "-q", "-b", "feat/wt", str(wt))
+    (wt / "wip.py").write_text("x\n")
+    assert gitscan.dirty_count(str(wt)) == 1 and gitscan.dirty_count(str(repo)) == 0
+    assert gitscan.remote_as_of(str(wt)) is not None
+    assert gitscan.remote_as_of(str(wt)) == gitscan.remote_as_of(str(repo))
+
+
+def test_commits_scanned_again_are_re_reached(tmp_path):
+    repo = make_repo(tmp_path / "proj")
+    conn, rid, root = _scan(tmp_path, repo)
+    conn.execute("DELETE FROM commit_reach WHERE repo_id = ?", (rid,))  # e.g. rows lost to a full re-read
+    gitscan.refresh_git_state(conn, rid, root, NOW)                    # tips unchanged, rows missing
+    assert len(_reach(conn)) == 3
