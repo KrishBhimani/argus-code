@@ -143,17 +143,25 @@ def run_pass(data_dir: Path, adapter, now_iso: str | None = None) -> PassResult:
             set_meta(conn, "global_user_email", g.lower())
         for r in conn.execute("SELECT id, root FROM repos").fetchall():
             res.repos += 1
-            if not Path(r["root"]).is_dir():
+            present = Path(r["root"]).is_dir()
+            if not present:
                 conn.execute("UPDATE repos SET present = 0 WHERE id = ?", (r["id"],))
             else:
                 try:
                     res.commits += gitscan.scan_repo(conn, r["id"], r["root"], now)
+                except gitscan.GitError as e:
+                    present = False
+                    conn.execute("UPDATE repos SET last_error = ? WHERE id = ?", (str(e), r["id"]))
+                    res.errors[r["root"]] = str(e)
+            # Link before reading git state: the squash match looks only at commits a session made.
+            for k, v in link_repo(conn, r["id"]).items():
+                res.links[k] += v
+            if present:
+                try:
                     gitscan.refresh_git_state(conn, r["id"], r["root"], now)
                 except gitscan.GitError as e:
                     conn.execute("UPDATE repos SET last_error = ? WHERE id = ?", (str(e), r["id"]))
                     res.errors[r["root"]] = str(e)
-            for k, v in link_repo(conn, r["id"]).items():
-                res.links[k] += v
         try:   # opt-in; does nothing unless on and 30 min have passed since the last check
             github.maybe_refresh(conn, now)
         except Exception as e:  # noqa: BLE001  never stop the pass
