@@ -388,3 +388,32 @@ def test_a_squashed_branch_counts_when_a_session_commit_is_inside_it_not_at_its_
     landed = {r["subject"]: r["landed"] for r in conn.execute(
         "SELECT c.subject, r.landed FROM commits c JOIN commit_reach r USING (repo_id, sha)")}
     assert landed["feat: the session's commit"] == 1
+
+
+@pytest.mark.parametrize("step", ["squash_landed", "merged_branches"])
+def test_a_failing_optional_match_never_blanks_the_repo(tmp_path, monkeypatch, step):
+    repo = _with_remote(tmp_path)
+    git(repo, "switch", "-q", "-c", "feat/x")
+    _commit(repo, "x.py", "feat: branch work")
+    conn, rid, root = _scan(tmp_path, repo)
+    _link(conn, rid, git(repo, "rev-parse", "feat/x").strip()[:12])
+    conn.execute("UPDATE repos SET reach_tips = NULL WHERE id = ?", (rid,))   # force a re-read
+
+    def boom(*_a, **_k):
+        raise gitscan.GitError("timed out")
+    monkeypatch.setattr(gitscan, step, boom)
+    gitscan.refresh_git_state(conn, rid, root, NOW)                          # must not raise
+    assert _reach(conn)["feat: branch work"] == (0, 0)                        # reachability still written
+
+
+def test_old_session_commits_are_not_tried_for_a_squash(tmp_path, monkeypatch):
+    repo = _with_remote(tmp_path)
+    git(repo, "switch", "-q", "-c", "feat/x")
+    _commit(repo, "x.py", "feat: branch work")                                # authored 2026-09-04
+    conn, rid, root = _scan(tmp_path, repo)
+    _link(conn, rid, git(repo, "rev-parse", "feat/x").strip()[:12])
+    conn.execute("UPDATE repos SET reach_tips = NULL WHERE id = ?", (rid,))
+    tried: list = []
+    monkeypatch.setattr(gitscan, "squash_landed", lambda root, ref, commits: tried.append(set(commits)) or set())
+    gitscan.refresh_git_state(conn, rid, root, "2027-06-01T00:00:00Z")      # far past the lookback
+    assert tried == []

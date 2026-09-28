@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
 import subprocess
@@ -11,6 +12,8 @@ from pathlib import Path
 
 from ..store.repository import normalize_project_path
 
+logger = logging.getLogger("argus.work")
+
 _RS, _US, _GS = "\x1e", "\x1f", "\x1d"
 LOG_FORMAT = (
     "%x1e%H%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%cI%x1f%s%x1f"
@@ -18,6 +21,7 @@ LOG_FORMAT = (
 )
 AGENT_TRAILER = re.compile(r"claude|noreply@anthropic\.com", re.IGNORECASE)
 FALLBACK_DAYS = 180
+SQUASH_LOOKBACK_DAYS = 90   # session commits older than this aren't tried for a squash
 
 
 class GitError(RuntimeError):
@@ -326,10 +330,23 @@ def refresh_git_state(conn: sqlite3.Connection, repo_id: int, root: str, now_iso
         reachable = set(run_git(["rev-list", "--all"], root).split())
         # A squash merge or a fast-forwarded release branch leaves the session's commits off main:
         # match them by content, and note which remote branches main already contains.
-        linked = {r["sha"] for r in conn.execute("SELECT sha FROM session_commits WHERE repo_id = ?", (repo_id,))}
+        since = _utc((datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+                      - timedelta(days=SQUASH_LOOKBACK_DAYS)).isoformat())
+        linked = {r["sha"] for r in conn.execute(
+            """SELECT sc.sha FROM session_commits sc JOIN commits c ON c.repo_id = sc.repo_id AND c.sha = sc.sha
+               WHERE sc.repo_id = ? AND c.authored_at >= ?""", (repo_id, since))}
         candidates = {s for s in linked if s in reachable and s not in on_default}
-        landed = squash_landed(root, ref, candidates) if ref and candidates else set()
-        merged = merged_branches(root, ref) if ref and remote else []
+        # Both are best-effort extras: a failure or timeout here must not mark the repo unknown.
+        try:
+            landed = squash_landed(root, ref, candidates) if ref and candidates else set()
+        except GitError as e:
+            logger.warning("work: squash match skipped for %s: %s", root, e)
+            landed = set()
+        try:
+            merged = merged_branches(root, ref) if ref and remote else []
+        except GitError as e:
+            logger.warning("work: merged-branch check skipped for %s: %s", root, e)
+            merged = []
         shas = [r["sha"] for r in conn.execute("SELECT sha FROM commits WHERE repo_id = ?", (repo_id,))]
     conn.execute("BEGIN")
     try:
