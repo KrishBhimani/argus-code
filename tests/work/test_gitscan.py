@@ -1,6 +1,7 @@
 """git history is read with the local git CLI only, stored for every author."""
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -306,3 +307,68 @@ def test_a_changed_default_ref_re_reads_reachability(tmp_path):
     conn.execute("UPDATE commit_reach SET on_default = 0")               # as read against the old default
     gitscan.refresh_git_state(conn, rid, root, NOW)                      # ref tips unchanged
     assert set(v[0] for v in _reach(conn).values()) == {1}
+
+
+def _link(conn, rid, sha_prefix):
+    sha = conn.execute("SELECT sha FROM commits WHERE repo_id = ? AND sha LIKE ?", (rid, sha_prefix + "%")).fetchone()[0]
+    conn.execute("INSERT INTO session_commits VALUES ('claude_code:s', ?, ?, 'exact')", (rid, sha))
+    return sha
+
+
+def _squash_merge(repo: Path, branch: str, message: str) -> None:
+    git(repo, "switch", "-q", "main")
+    git(repo, "merge", "-q", "--squash", branch)
+    git(repo, "commit", "-q", "-m", message, date="2026-09-06T10:00:00Z")
+    git(repo, "push", "-q", "origin", "main")
+
+
+def test_a_squash_with_an_edited_title_is_found_by_content(tmp_path):
+    repo = _with_remote(tmp_path)
+    git(repo, "switch", "-q", "-c", "feat/archive")
+    _commit(repo, "x.py", "feat: archive part 1")
+    _commit(repo, "y.py", "feat: archive part 2")
+    git(repo, "push", "-q", "origin", "feat/archive")
+    conn, rid, root = _scan(tmp_path, repo)
+    tip = git(repo, "rev-parse", "feat/archive").strip()
+    _link(conn, rid, tip[:12])
+    _squash_merge(repo, "feat/archive", "Archive the command log")     # no (#N): the title was edited
+    gitscan.scan_repo(conn, rid, root, NOW)
+    gitscan.refresh_git_state(conn, rid, root, NOW)
+    landed = {r["subject"]: r["landed"] for r in conn.execute(
+        "SELECT c.subject, r.landed FROM commits c JOIN commit_reach r USING (repo_id, sha)")}
+    assert landed["feat: archive part 1"] == 1 and landed["feat: archive part 2"] == 1
+    assert landed["feat: first"] == 0
+
+
+def test_a_different_change_on_main_is_not_a_squash(tmp_path):
+    repo = _with_remote(tmp_path)
+    git(repo, "switch", "-q", "-c", "feat/other")
+    _commit(repo, "x.py", "feat: branch work")
+    conn, rid, root = _scan(tmp_path, repo)
+    _link(conn, rid, git(repo, "rev-parse", "feat/other").strip()[:12])
+    git(repo, "switch", "-q", "main")
+    _commit(repo, "z.py", "feat: unrelated on main")
+    gitscan.scan_repo(conn, rid, root, NOW)
+    gitscan.refresh_git_state(conn, rid, root, NOW)
+    assert conn.execute("SELECT MAX(landed) FROM commit_reach").fetchone()[0] == 0
+
+
+def test_merged_branches_lists_remote_branches_in_main_but_not_main(tmp_path):
+    repo = _with_remote(tmp_path)
+    git(repo, "push", "-q", "origin", "main:development")               # a release branch equal to main
+    git(repo, "switch", "-q", "-c", "feat/open")
+    _commit(repo, "o.py", "feat: still open")
+    git(repo, "push", "-q", "origin", "feat/open")
+    git(repo, "fetch", "-q", "origin")
+    conn, rid, _ = _scan(tmp_path, repo)
+    assert json.loads(conn.execute("SELECT merged_branches FROM repos").fetchone()[0]) == ["development"]
+
+
+def test_no_ref_change_means_no_squash_work(tmp_path, monkeypatch):
+    repo = _with_remote(tmp_path)
+    conn, rid, root = _scan(tmp_path, repo)
+    seen: list[list[str]] = []
+    real = gitscan.run_git
+    monkeypatch.setattr(gitscan, "run_git", lambda args, *a, **k: seen.append(args) or real(args, *a, **k))
+    gitscan.refresh_git_state(conn, rid, root, NOW)
+    assert not any(a[0] in ("patch-id", "merge-base", "diff", "log") or a[:2] == ["branch", "-r"] for a in seen)

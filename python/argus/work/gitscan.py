@@ -256,6 +256,46 @@ def remote_as_of(root: str) -> str | None:
     return datetime.fromtimestamp(head.stat().st_mtime, timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def merged_branches(root: str, ref: str) -> list[str]:
+    """Remote branches whose tip is on the default branch (a release branch fast-forwarded into
+    main), by name without 'origin/'. The default branch itself and HEAD are left out."""
+    base = ref.rsplit("/", 1)[-1]
+    out = run_git(["branch", "-r", "--merged", ref, "--format=%(refname:short)"], root, timeout=30)
+    names = {line.strip().split("/", 1)[1] for line in out.splitlines() if "/" in line.strip()}
+    return sorted(n for n in names if n not in (base, "HEAD"))
+
+
+def _patch_ids(root: str, diff_text: str) -> set[str]:
+    if not diff_text.strip():
+        return set()
+    return {line.split()[0] for line in run_git(["patch-id", "--stable"], root, input=diff_text).splitlines() if line.strip()}
+
+
+def squash_landed(root: str, ref: str, tips: set[str]) -> set[str]:
+    """Commits of branches whose whole change is on the default branch as one commit (a squash
+    merge, whatever its title). Only branches whose tip is in `tips` (tied to a session) are tried."""
+    branch_tips = {line.strip() for line in run_git(
+        ["for-each-ref", "--format=%(objectname)", "refs/heads", "refs/remotes"], root, timeout=15).splitlines()
+        if line.strip() in tips}
+    landed: set[str] = set()
+    main_ids: dict[str, set[str]] = {}   # per merge-base: patch-ids of the default branch since then
+    for tip in sorted(branch_tips):
+        try:
+            base = run_git(["merge-base", ref, tip], root, timeout=15).strip()
+        except GitError:
+            continue
+        if not base or base == tip:
+            continue
+        mine = _patch_ids(root, run_git(["diff", base, tip], root))
+        if not mine:
+            continue
+        if base not in main_ids:
+            main_ids[base] = _patch_ids(root, run_git(["log", "-p", "--no-merges", f"{base}..{ref}"], root))
+        if mine <= main_ids[base]:
+            landed.update(run_git(["rev-list", f"{base}..{tip}"], root).split())
+    return landed
+
+
 def refresh_git_state(conn: sqlite3.Connection, repo_id: int, root: str, now_iso: str) -> None:
     """Per stored commit: on the default branch? on any remote? Re-read only when refs moved
     (a fast-forward merge moves them without new commits) or rows are missing. The folder's
@@ -264,7 +304,8 @@ def refresh_git_state(conn: sqlite3.Connection, repo_id: int, root: str, now_iso
                        (repo_id,)).fetchone()
     missing = conn.execute(
         """SELECT 1 FROM commits c WHERE c.repo_id = ? AND NOT EXISTS
-             (SELECT 1 FROM commit_reach r WHERE r.repo_id = c.repo_id AND r.sha = c.sha AND r.reachable IS NOT NULL)
+             (SELECT 1 FROM commit_reach r WHERE r.repo_id = c.repo_id AND r.sha = c.sha
+                     AND r.reachable IS NOT NULL AND r.landed IS NOT NULL)
            LIMIT 1""",
         (repo_id,)).fetchone()
     ref = default_ref(root)
@@ -277,15 +318,22 @@ def refresh_git_state(conn: sqlite3.Connection, repo_id: int, root: str, now_iso
         pushed = set(run_git(["rev-list", "--remotes"], root).split()) if remote else None
         # An amended or rebased commit stays in `commits` but no ref reaches it any more.
         reachable = set(run_git(["rev-list", "--all"], root).split())
+        # A squash merge or a fast-forwarded release branch leaves the session's commits off main:
+        # match them by content, and note which remote branches main already contains.
+        linked = {r["sha"] for r in conn.execute("SELECT sha FROM session_commits WHERE repo_id = ?", (repo_id,))}
+        candidates = {s for s in linked if s in reachable and s not in on_default}
+        landed = squash_landed(root, ref, candidates) if ref and candidates else set()
+        merged = merged_branches(root, ref) if ref and remote else []
         shas = [r["sha"] for r in conn.execute("SELECT sha FROM commits WHERE repo_id = ?", (repo_id,))]
     conn.execute("BEGIN")
     try:
         if reread:
             conn.execute("DELETE FROM commit_reach WHERE repo_id = ?", (repo_id,))
             conn.executemany(
-                "INSERT INTO commit_reach (repo_id, sha, on_default, pushed, reachable) VALUES (?, ?, ?, ?, ?)",
-                [(repo_id, s, int(s in on_default), None if pushed is None else int(s in pushed), int(s in reachable))
-                 for s in shas])
+                "INSERT INTO commit_reach (repo_id, sha, on_default, pushed, reachable, landed) VALUES (?, ?, ?, ?, ?, ?)",
+                [(repo_id, s, int(s in on_default), None if pushed is None else int(s in pushed), int(s in reachable),
+                  int(s in landed)) for s in shas])
+            conn.execute("UPDATE repos SET merged_branches = ? WHERE id = ?", (json.dumps(merged), repo_id))
         conn.execute(
             """UPDATE repos SET default_ref = ?, has_remote = ?, reach_tips = ref_tips, dirty = ?,
                  dirty_checked_at = ?, remote_as_of = ? WHERE id = ?""",
