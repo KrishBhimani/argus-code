@@ -34,19 +34,22 @@ def thread_state(story: dict, folder: dict, now_iso: str, *, newest_in_folder: b
     idle = (_dt(now_iso) - _dt(story["last_ts"])).total_seconds() / 86_400
     if commits and all(c["on_default"] or c.get("landed") for c in commits):
         return "shipped", f"{_n(len(commits), 'commit')} on {base}"
-    gh = folder.get("pr_states") or {}
+    # GitHub's answers, when it has them, beat the local guesses below.
+    gh = {p: s for p, s in (folder.get("pr_states") or {}).items() if s in ("OPEN", "MERGED", "CLOSED")}
+    github_knows = bool(story["prs"]) and all(p in gh for p in story["prs"])
     merged = sorted(p for p in story["prs"] if gh.get(p) == "MERGED")
     if merged:
         return "shipped", f"PR #{merged[-1]} merged"
     # A squash merge lands a new commit on main, so the thread's own commits never reach it
     # (and its branch is often deleted): the PR's number on main is the evidence.
     landed = sorted(set(story["prs"]) & set(folder.get("landed_prs") or ()))
-    if landed:
+    if landed and not github_knows:
         return "shipped", f"PR #{landed[-1]} merged into {base}"
     # A release PR (development -> main) completed as a fast-forward leaves no merge commit and
     # the session none of its own: its branch being in main is the evidence.
     branch = story.get("branch")
-    if not commits and story["prs"] and branch and branch != base and branch in (folder.get("merged_branches") or ()):
+    if (not github_knows and not commits and story["prs"] and branch and branch != base
+            and branch in (folder.get("merged_branches") or ())):
         return "shipped", f"PR #{max(story['prs'])} merged ({branch} is in {base})"
     unpushed = sum(1 for c in commits if c.get("pushed") == 0)   # None = no remote: unknowable, not unpushed
     if unpushed:

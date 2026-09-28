@@ -64,6 +64,13 @@ CASES = [
     ("one closed, one open", story([(0, 1)], prs=[9, 10]), {"pr_states": {9: "CLOSED", 10: "OPEN"}, "github_on": True},
      True, "pr_open", "PR #10 open"),
     ("github on: no hint", story([(0, 1)], prs=[3]), {"github_on": True}, True, "pr_open", "PR #3 open"),
+    # GitHub's answer beats a local guess.
+    ("github CLOSED beats the release rule", story(prs=[120], branch="development"),
+     {"merged_branches": ["development"], "pr_states": {120: "CLOSED"}}, True, "dropped", "PR #120 closed without merging"),
+    ("github OPEN beats a (#N) subject on main", story([(0, 1)], prs=[212]),
+     {"landed_prs": {212}, "pr_states": {212: "OPEN"}}, True, "pr_open", "PR #212 open"),
+    ("NOT_FOUND is no answer: local rules and the hint apply", story([(0, 1)], prs=[77]),
+     {"pr_states": {77: "NOT_FOUND"}}, True, "pr_open", "PR #77 open · from git; turn on GitHub check for exact status"),
     # The hint is about the answer, not the switch: a one-off refresh answered this PR.
     ("github answered open while the switch is off: no hint", story([(0, 1)], prs=[193]),
      {"pr_states": {193: "OPEN"}}, True, "pr_open", "PR #193 open"),
