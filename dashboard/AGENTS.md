@@ -35,9 +35,13 @@ analyses in `src/lib/analysis/`.
   unless `argus start --work`). Its API client lives in `features/work/api.ts`, not
   `lib/api`, so the trial stays removable in one folder. A project can span several
   folders (`folder_ids`, `folders`): find a project by `folder_ids.includes(id)` so
-  old per-folder links still open it. A project has two tabs, Overview and Activity
-  (`?tab=timeline` from before the redesign maps to Activity);
-  `/projects/$repo?tab=activity&focus=<ids>` scrolls to and highlights those sessions.
+  old per-folder links still open it. The home leads with open threads
+  (`useWorkThreads`, `ThreadCard`) above project outcome cards. A project has two tabs,
+  Threads (Open / Shipped / Dropped columns, daily chart folded below) and Activity;
+  old `?tab=overview` maps to Threads and `?tab=timeline` to Activity.
+  `?tab=threads&focus=<thread key>` opens and highlights that thread;
+  `?tab=activity&focus=<ids>` scrolls to and highlights those sessions. Thread state
+  badges come from `fmt.ts` `STATE` and always carry text, never colour alone.
   Commit evidence is shown in plain words via `fmt.ts` `EVIDENCE` (exact → made here,
   coauthored → Claude co-author, inferred → likely); keep that mapping in one place.
 - **SPA routing.** Deep links (`/sessions/<id>`) are served by the `index.html`

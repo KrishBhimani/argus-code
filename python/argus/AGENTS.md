@@ -59,6 +59,16 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   transcript gap estimate inside that turn is counted instead. A story cut by the
   range carries `whole` (the session's end-to-end totals). PR tags are kept only when
   their repository matches the project's remote.
+  **Threads:** a story gets a `state` + plain-words `reason` from `work/threads.py`
+  (pure; ordered rules, `unknown` first) using scan-time git facts: `commit_reach`
+  (per commit: on the default branch? on any remote? NULL pushed = no remote, never
+  "unpushed") and `repos.{default_ref, has_remote, reach_tips, dirty, remote_as_of}`.
+  Reachability is re-read when ref tips move or rows are missing. A PR whose number is
+  on the project's default branch (`… (#N)` squash / `Merge pull request #N`) ships its
+  thread, since squash merges never make the thread's own commits reachable. Only the
+  newest thread in a folder may claim its uncommitted changes. `/api/work/threads` lists
+  open threads (30-day lookback) + period counts. Argus never fetches: remote state is
+  as of the user's last fetch (`remote_as_of`, FETCH_HEAD mtime).
 - `detectors/` — alert detectors: the registry, the shared helpers in `base.py`,
   and one module per rule (`tool_error_rate_spike`, `cost_spike`, `cache_hit_drop`).
 - `pricing/` — pricing table load / refresh / compute; bundled JSON under repo `pricing/`.
