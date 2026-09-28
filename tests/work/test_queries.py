@@ -350,3 +350,17 @@ def test_a_merge_commit_pr_ships_its_thread(tmp_path):
     by = {s["title"]: s for s in queries.overview(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z",
                                                    now_iso="2026-09-22T00:00:00Z")["stories"]}
     assert (by["Fix B"]["state"], by["Fix B"]["reason"]) == ("shipped", "PR #9 merged into main")
+
+
+def test_project_outcomes_match_home_counts_when_a_thread_spans_the_period_start(tmp_path):
+    conn = _world(tmp_path)
+    _git_facts(conn)
+    # A committed on Sep 10 and was worked on again on Sep 16: one thread across the period's start.
+    r = Repository(open_db(tmp_path / "argus.db"))
+    r.upsert_turn(turn_factory("claude_code:A:m2", "claude_code:A", "2026-09-16T10:00:00Z", cost=1.0))
+    r.db.close()
+    now = "2026-09-22T00:00:00Z"
+    (p,) = queries.projects(conn, now_iso=now, days=7)
+    t = queries.threads(conn, now_iso=now, days=7)
+    assert p["outcomes"] == t["counts"]
+    assert p["outcomes"]["shipped"] == 1          # A's Sep 10 commit is on main, whatever the period

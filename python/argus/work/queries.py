@@ -214,7 +214,7 @@ def projects(conn: sqlite3.Connection, now_iso: str, tz: int = 0, days: int = 30
         last_commit = mine_commits[-1]["authored_at"] if mine_commits else None
         outcomes = {"shipped": 0, "open": 0, "dropped": 0}
         if has_core:
-            for s in _project_stories(conn, rids, frm, to, to):
+            for s in _period_stories(conn, rids, frm, to):
                 b = _bucket(s["state"])
                 if b:
                     outcomes[b] += 1
@@ -362,6 +362,14 @@ def _project_stories(conn, rids: list[int], frm: str, to: str, now_iso: str) -> 
     return _stateful(conn, group_stories(_summaries(conn, rids, _sessions(conn, rids), frm, to, "mine"), gap), now_iso, rids)
 
 
+def _period_stories(conn, rids: list[int], frm: str, now_iso: str) -> list[dict]:
+    """Threads active since `frm`, each read whole over at least the open lookback: a thread
+    that committed before the period and went on inside it keeps its commits (and state).
+    The home counts and each project's outcomes both come from here, so they agree."""
+    lookback = _iso(_dt(now_iso) - timedelta(days=OPEN_LOOKBACK_DAYS))
+    return [s for s in _project_stories(conn, rids, min(frm, lookback), now_iso, now_iso) if s["last_ts"] >= frm]
+
+
 def _bucket(state: str) -> str | None:
     return "shipped" if state == "shipped" else "dropped" if state == "dropped" else "open" if state in OPEN_STATES else None
 
@@ -378,7 +386,7 @@ def threads(conn: sqlite3.Connection, now_iso: str, tz: int = 0, days: int = 30)
     for key, folders in _groups(conn).items():
         rids = [f["id"] for f in folders]
         name = _project_name(key, next((f for f in folders if f["present"]), folders[0]), len(folders))
-        for s in _project_stories(conn, rids, min(frm, lookback), now_iso, now_iso):
+        for s in _period_stories(conn, rids, min(frm, lookback), now_iso):
             b = _bucket(s["state"])
             if b and s["last_ts"] >= frm:
                 counts[b] += 1
