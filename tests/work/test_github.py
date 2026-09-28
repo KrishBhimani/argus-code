@@ -38,7 +38,12 @@ def fake_gh(answers: dict, calls: list):
             raise github.GhError("Could not resolve to a Repository")
         data = {f"p{n}": ({"state": s, "mergedAt": "2026-09-20T00:00:00Z" if s == "MERGED" else None} if s else None)
                 for n, s in answers[repo].items() if f"p{n}:" in q}
-        return json.dumps({"data": {"repository": data}})
+        out = {"data": {"repository": data}}
+        missing = [k for k, v in data.items() if v is None]
+        if missing:   # like real gh: exit 1, yet the other answers are on stdout
+            out["errors"] = [{"type": "NOT_FOUND", "path": ["repository", k]} for k in missing]
+            raise github.GhError("Could not resolve to a PullRequest", stdout=json.dumps(out))
+        return json.dumps(out)
     return run
 
 
@@ -93,3 +98,24 @@ def test_a_missing_gh_is_reported_not_raised(conn, monkeypatch):
     monkeypatch.setattr(github.shutil, "which", lambda _name: None)
     r = github.refresh(conn, NOW)
     assert r["checked"] == 0 and "gh" in r["error"] and github.status(conn)["gh_available"] is False
+
+
+def test_a_missing_pr_keeps_the_rest_of_its_batch_and_is_not_asked_again(conn, monkeypatch):
+    conn.execute("INSERT INTO session_prs VALUES ('s4', 'https://github.com/quirq-ai/xo-space/pull/999', 999, 'quirq-ai/xo-space', NULL)")
+    calls: list = []
+    monkeypatch.setattr(github, "run_gh", fake_gh({"quirq-ai/xo-space": {134: "MERGED", 141: "OPEN", 999: None}, "me/tool": {7: "OPEN"}}, calls))
+    r = github.refresh(conn, NOW)
+    assert github.pr_states(conn, "quirq-ai/xo-space") == {134: "MERGED", 141: "OPEN", 999: "NOT_FOUND"}
+    assert r["checked"] == 3 and "999" in r["error"]
+    calls.clear()
+    github.refresh(conn, NOW)
+    assert all("p999:" not in q for q in calls)                    # NOT_FOUND is final too
+
+
+def test_pr_numbers_that_are_not_integers_are_skipped(conn, monkeypatch):
+    conn.execute("INSERT INTO session_prs VALUES ('s5', 'https://github.com/me/tool/pull/x', 'abc', 'me/tool', NULL)")
+    conn.execute("INSERT INTO session_prs VALUES ('s6', 'https://github.com/me/tool/pull/9', 99999999999, 'me/tool', NULL)")
+    calls: list = []
+    monkeypatch.setattr(github, "run_gh", fake_gh({"quirq-ai/xo-space": {134: "OPEN", 141: "OPEN"}, "me/tool": {7: "OPEN"}}, calls))
+    assert github.refresh(conn, NOW)["error"] is None
+    assert all("pabc" not in q and "p99999999999" not in q for q in calls)
