@@ -271,12 +271,18 @@ def _patch_ids(root: str, diff_text: str) -> set[str]:
     return {line.split()[0] for line in run_git(["patch-id", "--stable"], root, input=diff_text).splitlines() if line.strip()}
 
 
-def squash_landed(root: str, ref: str, tips: set[str]) -> set[str]:
+def squash_landed(root: str, ref: str, commits: set[str]) -> set[str]:
     """Commits of branches whose whole change is on the default branch as one commit (a squash
-    merge, whatever its title). Only branches whose tip is in `tips` (tied to a session) are tried."""
-    branch_tips = {line.strip() for line in run_git(
-        ["for-each-ref", "--format=%(objectname)", "refs/heads", "refs/remotes"], root, timeout=15).splitlines()
-        if line.strip() in tips}
+    merge, whatever its title). Only branches containing one of `commits` (tied to a session) are
+    tried; the session's commit need not be the tip, since later commits often follow it."""
+    branch_tips: set[str] = set()
+    todo = sorted(commits)
+    for i in range(0, len(todo), 200):   # --contains ORs; chunks keep the command line short
+        args = ["for-each-ref", "--format=%(objectname)"]
+        for sha in todo[i:i + 200]:
+            args += ["--contains", sha]
+        branch_tips.update(line.strip() for line in run_git([*args, "refs/heads", "refs/remotes"], root).splitlines()
+                           if line.strip())
     landed: set[str] = set()
     main_ids: dict[str, set[str]] = {}   # per merge-base: patch-ids of the default branch since then
     for tip in sorted(branch_tips):

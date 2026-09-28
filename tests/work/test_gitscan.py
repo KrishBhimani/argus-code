@@ -372,3 +372,19 @@ def test_no_ref_change_means_no_squash_work(tmp_path, monkeypatch):
     monkeypatch.setattr(gitscan, "run_git", lambda args, *a, **k: seen.append(args) or real(args, *a, **k))
     gitscan.refresh_git_state(conn, rid, root, NOW)
     assert not any(a[0] in ("patch-id", "merge-base", "diff", "log") or a[:2] == ["branch", "-r"] for a in seen)
+
+
+def test_a_squashed_branch_counts_when_a_session_commit_is_inside_it_not_at_its_tip(tmp_path):
+    repo = _with_remote(tmp_path)
+    git(repo, "switch", "-q", "-c", "feat/log")
+    _commit(repo, "x.py", "feat: the session's commit")
+    conn, rid, root = _scan(tmp_path, repo)
+    _link(conn, rid, git(repo, "rev-parse", "feat/log").strip()[:12])
+    _commit(repo, "y.py", "feat: a later commit, made outside the session")     # the tip is no longer linked
+    git(repo, "push", "-q", "origin", "feat/log")
+    _squash_merge(repo, "feat/log", "Keep the command log under inbox")
+    gitscan.scan_repo(conn, rid, root, NOW)
+    gitscan.refresh_git_state(conn, rid, root, NOW)
+    landed = {r["subject"]: r["landed"] for r in conn.execute(
+        "SELECT c.subject, r.landed FROM commits c JOIN commit_reach r USING (repo_id, sha)")}
+    assert landed["feat: the session's commit"] == 1
