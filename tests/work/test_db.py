@@ -88,7 +88,7 @@ def test_an_existing_work_db_gains_git_state_without_losing_rows(tmp_path):
     row = conn.execute(f"SELECT root, {', '.join(NEW_REPO_COLUMNS)} FROM repos").fetchone()
     assert tuple(row) == ("/r", None, None, None, None, None, None)
     conn.execute("INSERT INTO commit_reach (repo_id, sha, on_default, pushed) VALUES (1, 'abc', 1, NULL)")
-    assert tuple(conn.execute("SELECT * FROM commit_reach").fetchone()) == (1, "abc", 1, None, None)
+    assert tuple(conn.execute("SELECT repo_id, sha, on_default, pushed FROM commit_reach").fetchone()) == (1, "abc", 1, None)
     conn.close()
 
 
