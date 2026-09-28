@@ -240,7 +240,7 @@ def test_stories_list_their_sessions_and_commits(tmp_path):
     conn = _world(tmp_path)
     o = queries.overview(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z")
     a = next(s for s in o["stories"] if s["title"] == "Build A")
-    assert a["commit_list"] == [{"sha": "abc1234", "subject": "feat: a", "evidence": "exact"}]
+    assert a["commit_list"] == [{"sha": "abc1234", "subject": "feat: a", "evidence": "exact", "on_default": None, "pushed": None}]
     (sess,) = a["session_list"]
     assert sess["session_id"] == "claude_code:A" and sess["title"] == "Build A" and sess["turns"] == 1
     assert sess["model"] == "claude-opus-4-7" and sess["active_ms"] == 3_600_000
@@ -264,3 +264,52 @@ def test_skill_lookup_is_one_query_whatever_the_session_count(tmp_path):
     run = lambda: queries.overview(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z")  # noqa: E731
     # one grouped query for per-session skills + the existing skill_cost breakdown
     assert _count_statements(conn, run, "turn_attribution") == 2
+
+
+def _git_facts(conn, *, dirty: int = 0) -> None:
+    conn.execute("UPDATE repos SET default_ref = 'refs/remotes/origin/main', has_remote = 1, dirty = ? WHERE id = 1", (dirty,))
+    conn.executemany("INSERT INTO commit_reach VALUES (1, ?, 1, 1)", [("abc1234",), ("def5678",)])
+
+
+def test_overview_stories_carry_state(tmp_path):
+    conn = _world(tmp_path)
+    _git_facts(conn)
+    o = queries.overview(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z", now_iso="2026-09-25T00:00:00Z")
+    by = {s["title"]: s for s in o["stories"]}
+    assert (by["Build A"]["state"], by["Build A"]["reason"]) == ("shipped", "1 commit on main")
+    assert by["Build A"]["commit_list"][0]["on_default"] == 1
+    assert (by["Fix B"]["state"], by["Fix B"]["key"]) == ("dropped", "claude_code:B")
+
+
+def test_threads_lists_open_work_across_projects(tmp_path):
+    conn = _world(tmp_path)
+    _git_facts(conn, dirty=3)
+    t = queries.threads(conn, now_iso="2026-09-22T00:00:00Z", days=30)
+    # B (Sep 20, no commit) is the newest story in folder 1, and the folder is dirty
+    assert [(x["title"], x["state"], x["reason"]) for x in t["open"]] == [("Fix B", "uncommitted", "folder has 3 changed files")]
+    assert (t["open"][0]["project_name"], t["open"][0]["project_id"], t["open"][0]["key"]) == ("proj", 1, "claude_code:B")
+    assert t["counts"] == {"shipped": 1, "open": 1, "dropped": 0}
+
+
+def test_only_the_newest_story_claims_a_dirty_folder(tmp_path):
+    conn = _world(tmp_path)
+    _git_facts(conn, dirty=3)
+    conn.execute("DELETE FROM session_commits")   # A now has no commit either
+    t = queries.threads(conn, now_iso="2026-09-22T00:00:00Z", days=30)
+    assert [x["title"] for x in t["open"]] == ["Fix B"]
+    assert t["counts"] == {"shipped": 0, "open": 1, "dropped": 1}
+
+
+def test_projects_carry_outcomes(tmp_path):
+    conn = _world(tmp_path)
+    _git_facts(conn)
+    (p,) = queries.projects(conn, now_iso="2026-09-25T00:00:00Z")
+    assert p["outcomes"] == {"shipped": 1, "open": 0, "dropped": 1}
+    assert p["cost_per_shipped"] == 4.0          # all spend ($4) ÷ 1 shipped, dropped work included
+    assert p["claude_share"] == 0.0              # abc1234 is mine, not co-authored: a real 0, not "no data"
+
+
+def test_threads_without_the_archive_are_empty(tmp_path):
+    conn = open_work_db(tmp_path)                # no argus.db: nothing attached as core
+    assert queries.threads(conn, now_iso="2026-09-22T00:00:00Z") == {
+        "open": [], "counts": {"shipped": 0, "open": 0, "dropped": 0}, "remote_as_of": None}

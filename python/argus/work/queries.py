@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from .db import get_meta
 from .linker import mine_emails
 from .stories import SessionSummary, group_stories
+from .threads import OPEN_STATES, thread_state
 
 _ROOT = "CASE WHEN instr(t.session_id, '/') > 0 THEN substr(t.session_id, 1, instr(t.session_id, '/') - 1) ELSE t.session_id END"
 
@@ -109,19 +110,30 @@ def _turn_rows(conn, ids: list[str], frm: str, to: str) -> list[sqlite3.Row]:
 _EVIDENCE_RANK = {"exact": 0, "coauthored": 1, "inferred": 2, None: 3}
 
 
-def _commits(conn, rids: list[int], frm: str, to: str, scope: str) -> list[sqlite3.Row]:
+def _max(a, b):
+    return b if a is None else a if b is None else max(a, b)
+
+
+def _commits(conn, rids: list[int], frm: str, to: str, scope: str) -> list[dict]:
     """A project's commits in range, each sha once: folders of one repo hold the same commits,
-    and the strongest link any folder found wins."""
-    best: dict[str, sqlite3.Row] = {}
-    for r in conn.execute(
-        f"""SELECT c.*, sc.session_id, sc.evidence FROM commits c
+    the strongest link any folder found wins, and so does the freshest reachability."""
+    best: dict[str, dict] = {}
+    reach: dict[str, tuple] = {}
+    for row in conn.execute(
+        f"""SELECT c.*, sc.session_id, sc.evidence, cr.on_default, cr.pushed FROM commits c
             LEFT JOIN session_commits sc ON sc.repo_id = c.repo_id AND sc.sha = c.sha
+            LEFT JOIN commit_reach cr ON cr.repo_id = c.repo_id AND cr.sha = c.sha
             WHERE c.repo_id IN ({_in(rids)}) AND c.authored_at >= ? AND c.authored_at < ?
             ORDER BY c.repo_id""", [*rids, frm, to]):
+        r = dict(row)
+        o, p = reach.get(r["sha"], (None, None))
+        reach[r["sha"]] = (_max(o, r["on_default"]), _max(p, r["pushed"]))
         seen = best.get(r["sha"])
         if seen is None or _EVIDENCE_RANK[r["evidence"]] < _EVIDENCE_RANK[seen["evidence"]]:
             best[r["sha"]] = r
     rows = sorted(best.values(), key=lambda r: (r["authored_at"], r["sha"]))
+    for r in rows:
+        r["on_default"], r["pushed"] = reach[r["sha"]]
     if scope == "all":
         return rows
     mine = set().union(*(mine_emails(conn, rid) for rid in rids))
@@ -151,6 +163,14 @@ def _earliest(conn: sqlite3.Connection) -> str | None:
     return r[0]
 
 
+def _groups(conn) -> dict[str, list[sqlite3.Row]]:
+    """Folders by project: clones and worktrees of one repo share a project_key."""
+    groups: dict[str, list[sqlite3.Row]] = {}
+    for r in conn.execute("SELECT * FROM repos ORDER BY id").fetchall():
+        groups.setdefault(r["project_key"] or f"id:{r['id']}", []).append(r)
+    return groups
+
+
 def projects(conn: sqlite3.Connection, now_iso: str, tz: int = 0, days: int = 30) -> list[dict]:
     """One row per project for the last `days` days (0 = all time): tokens and cost from
     argus.db, commits from git, time from active spans, and the latest piece of work."""
@@ -158,9 +178,7 @@ def projects(conn: sqlite3.Connection, now_iso: str, tz: int = 0, days: int = 30
     first = _earliest(conn) if days == 0 else None
     frm = first or _iso(_dt(now_iso) - timedelta(days=days or 30))
     buckets = _days(frm if days == 0 else _iso(_dt(now_iso) - timedelta(days=(days or 30) - 1)), now_iso, tz)
-    groups: dict[str, list[sqlite3.Row]] = {}
-    for r in conn.execute("SELECT * FROM repos ORDER BY id").fetchall():
-        groups.setdefault(r["project_key"] or f"id:{r['id']}", []).append(r)
+    groups = _groups(conn)
     ids_of = {key: _sessions(conn, [f["id"] for f in folders]) for key, folders in groups.items()}
     project_of = {sid: key for key, ids in ids_of.items() for sid in ids}
     has_core = conn.execute("SELECT 1 FROM pragma_database_list WHERE name = 'core'").fetchone() is not None
@@ -193,6 +211,14 @@ def projects(conn: sqlite3.Connection, now_iso: str, tz: int = 0, days: int = 30
                       "session_id": ended["id"]}
         mine_commits = _commits(conn, rids, "0000", to, "mine")
         last_commit = mine_commits[-1]["authored_at"] if mine_commits else None
+        outcomes = {"shipped": 0, "open": 0, "dropped": 0}
+        if has_core:
+            for s in _project_stories(conn, rids, frm, to, to):
+                b = _bucket(s["state"])
+                if b:
+                    outcomes[b] += 1
+        in_period = [c for c in mine_commits if frm <= c["authored_at"] < to]
+        added = sum(c["added"] for c in in_period)
         out.append({
             "id": rids[0], "display_name": _project_name(key, r, len(folders)), "root": r["root"],
             "present": any(f["present"] for f in folders),
@@ -207,6 +233,9 @@ def projects(conn: sqlite3.Connection, now_iso: str, tz: int = 0, days: int = 30
             "daily_tokens": list(tokens[key].values()),
             "last_worked_at": max(filter(None, [ended["ended_at"] if ended else None, last_commit]), default=None),
             "latest": latest,
+            "outcomes": outcomes,
+            "cost_per_shipped": (cost[key] / outcomes["shipped"]) if outcomes["shipped"] else None,
+            "claude_share": (sum(c["added"] for c in in_period if c["agent_coauthored"]) / added) if added else None,
         })
     return sorted(out, key=lambda p: p["last_worked_at"] or "", reverse=True)
 
@@ -255,7 +284,8 @@ def _summaries(conn, rids, ids, frm, to, scope) -> list[SessionSummary]:
         if c["session_id"]:
             commits_by_sid.setdefault(c["session_id"], []).append(
                 {"sha": c["sha"], "subject": c["subject"], "evidence": c["evidence"],
-                 "added": c["added"], "deleted": c["deleted"], "files": c["files"]})
+                 "added": c["added"], "deleted": c["deleted"], "files": c["files"],
+                 "on_default": c["on_default"], "pushed": c["pushed"]})
     # One grouped query: one per session scanned turns x attribution again for every session (3 s on a busy repo).
     skills_by_sid: dict[str, list[str]] = {}
     if by_sid:
@@ -267,7 +297,8 @@ def _summaries(conn, rids, ids, frm, to, scope) -> list[SessionSummary]:
     out = []
     for sid, ts in by_sid.items():
         facts =conn.execute("SELECT title FROM session_facts WHERE session_id = ?", (sid,)).fetchone()
-        branch = conn.execute("SELECT git_branch FROM session_repo WHERE session_id = ?", (sid,)).fetchone()["git_branch"]
+        where = conn.execute("SELECT git_branch, repo_id FROM session_repo WHERE session_id = ?", (sid,)).fetchone()
+        branch = where["git_branch"]
         skills = skills_by_sid.get(sid, [])
         prs = [r["pr_number"] for r in conn.execute(
             """SELECT pr_number FROM session_prs WHERE session_id = ? AND pr_number IS NOT NULL
@@ -277,11 +308,73 @@ def _summaries(conn, rids, ids, frm, to, scope) -> list[SessionSummary]:
                                   active.get(sid, 0), sum(t["cost_usd"] for t in ts), len(ts), skills, prs,
                                   commits_by_sid.get(sid, []), sid in estimated,
                                   sum(t["output_tokens"] or 0 for t in ts), _whole(conn, sid, frm, to),
-                                  _model(conn, sid)))
+                                  _model(conn, sid), repo_id=where["repo_id"]))
     return out
 
 
-def overview(conn: sqlite3.Connection, repo_id: int, frm: str, to: str, scope: str = "mine", tz: int = 0) -> dict:
+OPEN_LOOKBACK_DAYS = 30   # the resume queue looks this far back, whatever the period chips say
+
+
+def _has_core(conn) -> bool:
+    return conn.execute("SELECT 1 FROM pragma_database_list WHERE name = 'core'").fetchone() is not None
+
+
+def _stateful(conn, stories: list[dict], now_iso: str) -> list[dict]:
+    """Give each story its state; the newest story per folder alone may claim that folder's
+    uncommitted changes. A folder that is gone has nothing uncommitted."""
+    folders = {r["id"]: dict(r) for r in conn.execute(
+        "SELECT id, last_error, default_ref, dirty, present, remote_as_of FROM repos")}
+    newest: dict[int, str] = {}
+    for s in stories:
+        if s["repo_id"] is not None and s["last_ts"] > newest.get(s["repo_id"], ""):
+            newest[s["repo_id"]] = s["last_ts"]
+    for s in stories:
+        f = folders.get(s["repo_id"]) or {"last_error": None, "default_ref": None, "dirty": None, "remote_as_of": None}
+        if not f.get("present", 1):
+            f = {**f, "dirty": 0}
+        s["state"], s["reason"] = thread_state(s, f, now_iso, newest_in_folder=newest.get(s["repo_id"]) == s["last_ts"])
+        s["remote_as_of"] = f.get("remote_as_of")
+    return stories
+
+
+def _project_stories(conn, rids: list[int], frm: str, to: str, now_iso: str) -> list[dict]:
+    gap = float(get_meta(conn, "story_gap_days") or 2)
+    return _stateful(conn, group_stories(_summaries(conn, rids, _sessions(conn, rids), frm, to, "mine"), gap), now_iso)
+
+
+def _bucket(state: str) -> str | None:
+    return "shipped" if state == "shipped" else "dropped" if state == "dropped" else "open" if state in OPEN_STATES else None
+
+
+def threads(conn: sqlite3.Connection, now_iso: str, tz: int = 0, days: int = 30) -> dict:
+    """Every open thread across projects (last OPEN_LOOKBACK_DAYS days, newest first) and the
+    period's shipped / open / dropped counts."""
+    empty = {"open": [], "counts": {"shipped": 0, "open": 0, "dropped": 0}, "remote_as_of": None}
+    if not _has_core(conn):
+        return empty
+    lookback = _iso(_dt(now_iso) - timedelta(days=OPEN_LOOKBACK_DAYS))
+    frm = (_earliest(conn) or now_iso) if days == 0 else _iso(_dt(now_iso) - timedelta(days=days))
+    out, counts = [], dict(empty["counts"])
+    for key, folders in _groups(conn).items():
+        rids = [f["id"] for f in folders]
+        name = _project_name(key, next((f for f in folders if f["present"]), folders[0]), len(folders))
+        for s in _project_stories(conn, rids, min(frm, lookback), now_iso, now_iso):
+            b = _bucket(s["state"])
+            if b and s["last_ts"] >= frm:
+                counts[b] += 1
+            if s["state"] in OPEN_STATES and s["last_ts"] >= lookback:
+                out.append({"key": s["key"], "project_id": rids[0], "project_name": name, "title": s["title"],
+                            "branch": s["branch"], "state": s["state"], "reason": s["reason"],
+                            "first_ts": s["first_ts"], "last_ts": s["last_ts"], "cost": s["cost"],
+                            "output_tokens": s["output_tokens"], "commits": s["commits"]["total"], "prs": s["prs"],
+                            "session_ids": s["session_ids"], "remote_as_of": s["remote_as_of"]})
+    out.sort(key=lambda t: t["last_ts"], reverse=True)
+    fetched = [t["remote_as_of"] for t in out if t["remote_as_of"]]
+    return {"open": out, "counts": counts, "remote_as_of": min(fetched) if fetched else None}
+
+
+def overview(conn: sqlite3.Connection, repo_id: int, frm: str, to: str, scope: str = "mine", tz: int = 0,
+             now_iso: str | None = None) -> dict:
     rids = project_ids(conn, repo_id)
     ids = _sessions(conn, rids)
     span = _dt(to) - _dt(frm)
@@ -331,7 +424,7 @@ def overview(conn: sqlite3.Connection, repo_id: int, frm: str, to: str, scope: s
         "tiles": tiles, "prior": prior,
         "daily": {"days": days, "active_ms": list(active_d.values()), "commits": list(commits_d.values()),
                   "output_tokens": list(tokens_d.values()), "cost": list(cost_d.values())},
-        "stories": group_stories(summaries, gap),
+        "stories": _stateful(conn, group_stories(summaries, gap), now_iso or to),
         "breakdowns": {
             "branches": top(branch_cost, 6),
             "skills": [{"name": k, "value": v / total_cost} for k, v in sorted(skill_cost.items(), key=lambda kv: -kv[1])[:6]],
