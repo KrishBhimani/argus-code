@@ -10,7 +10,7 @@ from argus.work.db import get_meta, open_work_db, set_meta
 
 TABLES = {"meta", "repos", "commits", "commit_files", "session_repo", "session_facts",
           "active_spans", "session_prs", "turn_attribution", "commit_claims",
-          "session_commits", "file_offsets"}
+          "session_commits", "file_offsets", "commit_reach"}
 
 
 def _snapshot(path):
@@ -69,4 +69,24 @@ def test_an_existing_work_db_gains_project_key_without_losing_rows(tmp_path):
     open_work_db(tmp_path).close()
     conn = open_work_db(tmp_path)   # twice: adding the column is idempotent
     assert tuple(conn.execute("SELECT root, project_key FROM repos").fetchone()) == ("/r", None)
+    conn.close()
+
+
+NEW_REPO_COLUMNS = ("default_ref", "has_remote", "reach_tips", "dirty", "dirty_checked_at", "remote_as_of")
+
+
+def test_an_existing_work_db_gains_git_state_without_losing_rows(tmp_path):
+    c = sqlite3.connect(tmp_path / "work.db")
+    c.execute("""CREATE TABLE repos (id INTEGER PRIMARY KEY AUTOINCREMENT, root TEXT NOT NULL UNIQUE,
+                 display_name TEXT NOT NULL, user_emails TEXT NOT NULL DEFAULT '[]', last_scanned_at TEXT,
+                 last_error TEXT, present INTEGER NOT NULL DEFAULT 1, ref_tips TEXT)""")
+    c.execute("INSERT INTO repos (root, display_name) VALUES ('/r', 'r')")
+    c.commit()
+    c.close()
+    open_work_db(tmp_path).close()
+    conn = open_work_db(tmp_path)   # twice: idempotent
+    row = conn.execute(f"SELECT root, {', '.join(NEW_REPO_COLUMNS)} FROM repos").fetchone()
+    assert tuple(row) == ("/r", None, None, None, None, None, None)
+    conn.execute("INSERT INTO commit_reach VALUES (1, 'abc', 1, NULL)")
+    assert tuple(conn.execute("SELECT * FROM commit_reach").fetchone()) == (1, "abc", 1, None)
     conn.close()
