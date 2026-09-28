@@ -10,9 +10,9 @@ FOLDER = {"last_error": None, "default_ref": "refs/remotes/origin/main", "dirty"
 
 
 def story(commits=(), prs=(), last_ts="2026-09-29T10:00:00Z", cost=0.44, branch="feat/x"):
-    # each commit: (on_default, pushed) or (on_default, pushed, reachable)
-    return {"commit_list": [{"on_default": c[0], "pushed": c[1], **({"reachable": c[2]} if len(c) > 2 else {})}
-                            for c in commits], "prs": list(prs),
+    # each commit: (on_default, pushed[, reachable[, landed]])
+    return {"commit_list": [{"on_default": c[0], "pushed": c[1], **({"reachable": c[2]} if len(c) > 2 else {}),
+                             **({"landed": c[3]} if len(c) > 3 else {})} for c in commits], "prs": list(prs),
             "last_ts": last_ts, "cost": cost, "branch": branch}
 
 
@@ -27,7 +27,7 @@ CASES = [
     ("not pushed beats PR", story([(0, 0), (0, 1)], prs=[212]), {}, True, "not_pushed", "1 commit not pushed"),
     ("no remote is not unpushed", story([(0, None)]), {"default_ref": "refs/heads/main"}, True,
      "in_progress", "1 commit on feat/x"),
-    ("pr open", story([(0, 1)], prs=[3, 212]), {}, True, "pr_open", "PR #212 open"),
+    ("pr open", story([(0, 1)], prs=[3, 212]), {}, True, "pr_open", "PR #212 open · from git; turn on GitHub check for exact status"),
     ("uncommitted", story(), {"dirty": 12}, True, "uncommitted", "folder has 12 changed files"),
     ("older thread can't claim the folder", story(), {"dirty": 12}, False, "dropped", "no commit · $0.44 spent"),
     ("clean folder, no commit", story(), {}, True, "dropped", "no commit · $0.44 spent"),
@@ -46,7 +46,24 @@ CASES = [
     # An amended / rebased commit is left behind unreachable: it is neither work nor unpushed.
     ("rewritten commit is ignored", story([(0, 0, 0), (1, 1, 1)]), {}, True, "shipped", "1 commit on main"),
     ("only rewritten commits", story([(0, 0, 0)]), {}, True, "dropped", "no commit · $0.44 spent"),
-    ("another PR landed, not this one", story([(0, 1)], prs=[212]), {"landed_prs": {191}}, True, "pr_open", "PR #212 open"),
+    ("another PR landed, not this one", story([(0, 1)], prs=[212]), {"landed_prs": {191}}, True, "pr_open",
+     "PR #212 open · from git; turn on GitHub check for exact status"),
+    # A: a squash found by content; a release branch already in main.
+    ("squash found by content", story([(0, 1, 1, 1), (0, 1, 1, 1)]), {}, True, "shipped", "2 commits on main"),
+    ("release PR, branch in main", story(prs=[134], branch="development"), {"merged_branches": ["development"]}, True,
+     "shipped", "PR #134 merged (development is in main)"),
+    ("release rule never fires for the default branch", story(prs=[193], branch="main"),
+     {"merged_branches": ["main"], "github_on": True}, True, "pr_open", "PR #193 open"),
+    # B: what GitHub says.
+    ("github says merged", story([(0, 1)], prs=[141]), {"pr_states": {141: "MERGED"}, "github_on": True}, True,
+     "shipped", "PR #141 merged"),
+    ("merged beats closed", story(prs=[5, 6]), {"pr_states": {5: "CLOSED", 6: "MERGED"}, "github_on": True}, True,
+     "shipped", "PR #6 merged"),
+    ("closed without merging", story([(0, 1)], prs=[9]), {"pr_states": {9: "CLOSED"}, "github_on": True}, True,
+     "dropped", "PR #9 closed without merging"),
+    ("one closed, one open", story([(0, 1)], prs=[9, 10]), {"pr_states": {9: "CLOSED", 10: "OPEN"}, "github_on": True},
+     True, "pr_open", "PR #10 open"),
+    ("github on: no hint", story([(0, 1)], prs=[3]), {"github_on": True}, True, "pr_open", "PR #3 open"),
 ]
 
 
