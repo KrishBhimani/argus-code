@@ -282,3 +282,27 @@ def test_rewritten_commits_are_marked_unreachable(tmp_path):
     reach = {r["subject"]: r["reachable"] for r in conn.execute(
         "SELECT c.subject, r.reachable FROM commits c JOIN commit_reach r USING (repo_id, sha)")}
     assert reach["feat: before amend"] == 0 and reach["feat: after amend"] == 1
+
+
+def test_a_dangling_origin_head_falls_through_to_origin_main(tmp_path):
+    repo = _with_remote(tmp_path)
+    git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/master")   # target pruned / renamed
+    assert gitscan.default_ref(str(repo)) == "refs/remotes/origin/main"
+
+
+def test_origin_main_beats_local_main_when_origin_head_is_unset(tmp_path):
+    repo = _with_remote(tmp_path)
+    git(repo, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")   # git init + push never sets it
+    _commit(repo, "c.py", "feat: on local main only")
+    conn, _, _ = _scan(tmp_path, repo)
+    assert conn.execute("SELECT default_ref FROM repos").fetchone()[0] == "refs/remotes/origin/main"
+    assert _reach(conn)["feat: on local main only"] == (0, 0)             # not shipped: never pushed
+
+
+def test_a_changed_default_ref_re_reads_reachability(tmp_path):
+    repo = _with_remote(tmp_path)
+    conn, rid, root = _scan(tmp_path, repo)
+    conn.execute("UPDATE repos SET default_ref = 'refs/heads/gone' WHERE id = ?", (rid,))
+    conn.execute("UPDATE commit_reach SET on_default = 0")               # as read against the old default
+    gitscan.refresh_git_state(conn, rid, root, NOW)                      # ref tips unchanged
+    assert set(v[0] for v in _reach(conn).values()) == {1}

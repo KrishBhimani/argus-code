@@ -217,20 +217,26 @@ def scan_repo(conn: sqlite3.Connection, repo_id: int, root: str, now_iso: str) -
     return len(commits)
 
 
-def default_ref(root: str) -> str | None:
-    """The branch work lands on: origin/HEAD when set, else local main, else local master."""
+def _resolves(root: str, ref: str) -> bool:
     try:
-        ref = run_git(["symbolic-ref", "-q", "refs/remotes/origin/HEAD"], root, timeout=15).strip()
-        if ref:
-            return ref
+        run_git(["rev-parse", "--verify", "-q", ref + "^{commit}"], root, timeout=15)
+        return True
+    except GitError:
+        return False
+
+
+def default_ref(root: str) -> str | None:
+    """The branch work lands on, first that resolves: origin/HEAD (a pruned target falls
+    through), origin/main, origin/master, then local main / master for a repo with no remote.
+    origin/HEAD is only set by clone; after git init + push, local main would count unpushed
+    commits as shipped."""
+    try:
+        head = run_git(["symbolic-ref", "-q", "refs/remotes/origin/HEAD"], root, timeout=15).strip()
     except GitError:   # not a symbolic ref: no origin, or origin/HEAD never set
-        pass
-    for name in ("refs/heads/main", "refs/heads/master"):
-        try:
-            run_git(["rev-parse", "--verify", "-q", name], root, timeout=15)
-            return name
-        except GitError:
-            continue
+        head = ""
+    for ref in (head, "refs/remotes/origin/main", "refs/remotes/origin/master", "refs/heads/main", "refs/heads/master"):
+        if ref and _resolves(root, ref):
+            return ref
     return None
 
 
@@ -254,7 +260,8 @@ def refresh_git_state(conn: sqlite3.Connection, repo_id: int, root: str, now_iso
     """Per stored commit: on the default branch? on any remote? Re-read only when refs moved
     (a fast-forward merge moves them without new commits) or rows are missing. The folder's
     dirty count and last fetch time are read every pass. Raises GitError; the caller records it."""
-    row = conn.execute("SELECT ref_tips, reach_tips FROM repos WHERE id = ?", (repo_id,)).fetchone()
+    row = conn.execute("SELECT ref_tips, reach_tips, default_ref, has_remote FROM repos WHERE id = ?",
+                       (repo_id,)).fetchone()
     missing = conn.execute(
         """SELECT 1 FROM commits c WHERE c.repo_id = ? AND NOT EXISTS
              (SELECT 1 FROM commit_reach r WHERE r.repo_id = c.repo_id AND r.sha = c.sha AND r.reachable IS NOT NULL)
@@ -263,7 +270,8 @@ def refresh_git_state(conn: sqlite3.Connection, repo_id: int, root: str, now_iso
     ref = default_ref(root)
     remote = bool(run_git(["remote"], root, timeout=15).strip())
     dirty, fetched = dirty_count(root), remote_as_of(root)
-    reread = missing is not None or row["reach_tips"] != row["ref_tips"]
+    reread = (missing is not None or row["reach_tips"] != row["ref_tips"]
+              or ref != row["default_ref"] or int(remote) != (row["has_remote"] or 0))
     if reread:   # git runs before the transaction, so no write lock is held while it works
         on_default = set(run_git(["rev-list", ref], root).split()) if ref else set()
         pushed = set(run_git(["rev-list", "--remotes"], root).split()) if remote else None
