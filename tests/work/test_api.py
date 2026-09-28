@@ -74,7 +74,7 @@ def test_projects_take_a_period(tmp_path):
 def test_threads_route(tmp_path):
     conn = _world(tmp_path)
     conn.execute("UPDATE repos SET default_ref = 'refs/heads/main' WHERE id = 1")
-    conn.execute("INSERT INTO commit_reach VALUES (1, 'abc1234', 1, NULL)")
+    conn.execute("INSERT INTO commit_reach (repo_id, sha, on_default, pushed) VALUES (1, 'abc1234', 1, NULL)")
     conn.close()
     c = _client(tmp_path, work=True)
     t = c.get("/api/work/threads?days=0").json()

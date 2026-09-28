@@ -10,7 +10,9 @@ FOLDER = {"last_error": None, "default_ref": "refs/remotes/origin/main", "dirty"
 
 
 def story(commits=(), prs=(), last_ts="2026-09-29T10:00:00Z", cost=0.44, branch="feat/x"):
-    return {"commit_list": [{"on_default": d, "pushed": p} for d, p in commits], "prs": list(prs),
+    # each commit: (on_default, pushed) or (on_default, pushed, reachable)
+    return {"commit_list": [{"on_default": c[0], "pushed": c[1], **({"reachable": c[2]} if len(c) > 2 else {})}
+                            for c in commits], "prs": list(prs),
             "last_ts": last_ts, "cost": cost, "branch": branch}
 
 
@@ -41,6 +43,9 @@ CASES = [
      "shipped", "PR #191 merged into main"),
     ("squash-merged PR, branch deleted", story([(0, 0)], prs=[191], last_ts="2026-09-01T10:00:00Z"),
      {"landed_prs": {191}}, True, "shipped", "PR #191 merged into main"),
+    # An amended / rebased commit is left behind unreachable: it is neither work nor unpushed.
+    ("rewritten commit is ignored", story([(0, 0, 0), (1, 1, 1)]), {}, True, "shipped", "1 commit on main"),
+    ("only rewritten commits", story([(0, 0, 0)]), {}, True, "dropped", "no commit · $0.44 spent"),
     ("another PR landed, not this one", story([(0, 1)], prs=[212]), {"landed_prs": {191}}, True, "pr_open", "PR #212 open"),
 ]
 

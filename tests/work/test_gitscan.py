@@ -270,3 +270,15 @@ def test_commits_scanned_again_are_re_reached(tmp_path):
     conn.execute("DELETE FROM commit_reach WHERE repo_id = ?", (rid,))  # e.g. rows lost to a full re-read
     gitscan.refresh_git_state(conn, rid, root, NOW)                    # tips unchanged, rows missing
     assert len(_reach(conn)) == 3
+
+
+def test_rewritten_commits_are_marked_unreachable(tmp_path):
+    repo = _with_remote(tmp_path)
+    _commit(repo, "b.py", "feat: before amend")
+    conn, rid, root = _scan(tmp_path, repo)
+    git(repo, "commit", "-q", "--amend", "-m", "feat: after amend")      # the old sha is left behind
+    gitscan.scan_repo(conn, rid, root, NOW)
+    gitscan.refresh_git_state(conn, rid, root, NOW)
+    reach = {r["subject"]: r["reachable"] for r in conn.execute(
+        "SELECT c.subject, r.reachable FROM commits c JOIN commit_reach r USING (repo_id, sha)")}
+    assert reach["feat: before amend"] == 0 and reach["feat: after amend"] == 1

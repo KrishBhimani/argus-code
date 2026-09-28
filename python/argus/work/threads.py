@@ -26,7 +26,8 @@ def thread_state(story: dict, folder: dict, now_iso: str, *, newest_in_folder: b
         return "unknown", f"git scan failed: {folder['last_error']}"
     if not folder.get("default_ref"):
         return "unknown", "no main branch found"
-    commits = story["commit_list"]
+    # An amended or rebased-away commit is neither work nor unpushed: its rewrite carries the thread.
+    commits = [c for c in story["commit_list"] if c.get("reachable") != 0]
     if any(c.get("on_default") is None for c in commits):
         return "unknown", "git state not read yet"
     base = folder["default_ref"].rsplit("/", 1)[-1]

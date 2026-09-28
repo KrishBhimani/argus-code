@@ -240,7 +240,7 @@ def test_stories_list_their_sessions_and_commits(tmp_path):
     conn = _world(tmp_path)
     o = queries.overview(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z")
     a = next(s for s in o["stories"] if s["title"] == "Build A")
-    assert a["commit_list"] == [{"sha": "abc1234", "subject": "feat: a", "evidence": "exact", "on_default": None, "pushed": None}]
+    assert a["commit_list"] == [{"sha": "abc1234", "subject": "feat: a", "evidence": "exact", "on_default": None, "pushed": None, "reachable": None}]
     (sess,) = a["session_list"]
     assert sess["session_id"] == "claude_code:A" and sess["title"] == "Build A" and sess["turns"] == 1
     assert sess["model"] == "claude-opus-4-7" and sess["active_ms"] == 3_600_000
@@ -268,7 +268,7 @@ def test_skill_lookup_is_one_query_whatever_the_session_count(tmp_path):
 
 def _git_facts(conn, *, dirty: int = 0) -> None:
     conn.execute("UPDATE repos SET default_ref = 'refs/remotes/origin/main', has_remote = 1, dirty = ? WHERE id = 1", (dirty,))
-    conn.executemany("INSERT INTO commit_reach VALUES (1, ?, 1, 1)", [("abc1234",), ("def5678",)])
+    conn.executemany("INSERT INTO commit_reach (repo_id, sha, on_default, pushed) VALUES (1, ?, 1, 1)", [("abc1234",), ("def5678",)])
 
 
 def test_overview_stories_carry_state(tmp_path):
@@ -318,7 +318,7 @@ def test_threads_without_the_archive_are_empty(tmp_path):
 def _squash(conn, repo_id: int, sha: str, subject: str) -> None:
     conn.execute("INSERT INTO commits VALUES (?, ?, 'Me', 'me@x', '2026-09-21T10:00:00Z', '2026-09-21T10:00:00Z', ?, 1, 0, 9, 0, 1)",
                  (repo_id, sha, subject))
-    conn.execute("INSERT INTO commit_reach VALUES (?, ?, 1, 1)", (repo_id, sha))
+    conn.execute("INSERT INTO commit_reach (repo_id, sha, on_default, pushed) VALUES (?, ?, 1, 1)", (repo_id, sha))
 
 
 def test_a_squash_merged_pr_ships_its_thread(tmp_path):

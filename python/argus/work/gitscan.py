@@ -257,7 +257,8 @@ def refresh_git_state(conn: sqlite3.Connection, repo_id: int, root: str, now_iso
     row = conn.execute("SELECT ref_tips, reach_tips FROM repos WHERE id = ?", (repo_id,)).fetchone()
     missing = conn.execute(
         """SELECT 1 FROM commits c WHERE c.repo_id = ? AND NOT EXISTS
-             (SELECT 1 FROM commit_reach r WHERE r.repo_id = c.repo_id AND r.sha = c.sha) LIMIT 1""",
+             (SELECT 1 FROM commit_reach r WHERE r.repo_id = c.repo_id AND r.sha = c.sha AND r.reachable IS NOT NULL)
+           LIMIT 1""",
         (repo_id,)).fetchone()
     ref = default_ref(root)
     remote = bool(run_git(["remote"], root, timeout=15).strip())
@@ -266,14 +267,17 @@ def refresh_git_state(conn: sqlite3.Connection, repo_id: int, root: str, now_iso
     if reread:   # git runs before the transaction, so no write lock is held while it works
         on_default = set(run_git(["rev-list", ref], root).split()) if ref else set()
         pushed = set(run_git(["rev-list", "--remotes"], root).split()) if remote else None
+        # An amended or rebased commit stays in `commits` but no ref reaches it any more.
+        reachable = set(run_git(["rev-list", "--all"], root).split())
         shas = [r["sha"] for r in conn.execute("SELECT sha FROM commits WHERE repo_id = ?", (repo_id,))]
     conn.execute("BEGIN")
     try:
         if reread:
             conn.execute("DELETE FROM commit_reach WHERE repo_id = ?", (repo_id,))
-            conn.executemany("INSERT INTO commit_reach VALUES (?, ?, ?, ?)",
-                             [(repo_id, s, int(s in on_default), None if pushed is None else int(s in pushed))
-                              for s in shas])
+            conn.executemany(
+                "INSERT INTO commit_reach (repo_id, sha, on_default, pushed, reachable) VALUES (?, ?, ?, ?, ?)",
+                [(repo_id, s, int(s in on_default), None if pushed is None else int(s in pushed), int(s in reachable))
+                 for s in shas])
         conn.execute(
             """UPDATE repos SET default_ref = ?, has_remote = ?, reach_tips = ref_tips, dirty = ?,
                  dirty_checked_at = ?, remote_as_of = ? WHERE id = ?""",

@@ -87,6 +87,20 @@ def test_an_existing_work_db_gains_git_state_without_losing_rows(tmp_path):
     conn = open_work_db(tmp_path)   # twice: idempotent
     row = conn.execute(f"SELECT root, {', '.join(NEW_REPO_COLUMNS)} FROM repos").fetchone()
     assert tuple(row) == ("/r", None, None, None, None, None, None)
-    conn.execute("INSERT INTO commit_reach VALUES (1, 'abc', 1, NULL)")
-    assert tuple(conn.execute("SELECT * FROM commit_reach").fetchone()) == (1, "abc", 1, None)
+    conn.execute("INSERT INTO commit_reach (repo_id, sha, on_default, pushed) VALUES (1, 'abc', 1, NULL)")
+    assert tuple(conn.execute("SELECT * FROM commit_reach").fetchone()) == (1, "abc", 1, None, None)
+    conn.close()
+
+
+def test_an_early_commit_reach_gains_reachable_without_losing_rows(tmp_path):
+    open_work_db(tmp_path).close()
+    c = sqlite3.connect(tmp_path / "work.db")
+    c.execute("DROP TABLE commit_reach")
+    c.execute("""CREATE TABLE commit_reach (repo_id INTEGER NOT NULL, sha TEXT NOT NULL,
+                 on_default INTEGER NOT NULL, pushed INTEGER, PRIMARY KEY (repo_id, sha))""")
+    c.execute("INSERT INTO commit_reach VALUES (1, 'abc', 1, 1)")
+    c.commit()
+    c.close()
+    conn = open_work_db(tmp_path)
+    assert tuple(conn.execute("SELECT sha, on_default, pushed, reachable FROM commit_reach").fetchone()) == ("abc", 1, 1, None)
     conn.close()

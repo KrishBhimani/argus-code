@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS session_commits (
 CREATE TABLE IF NOT EXISTS file_offsets (path TEXT PRIMARY KEY, byte_offset INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS commit_reach (
   repo_id INTEGER NOT NULL, sha TEXT NOT NULL,
-  on_default INTEGER NOT NULL, pushed INTEGER,
+  on_default INTEGER NOT NULL, pushed INTEGER, reachable INTEGER,
   PRIMARY KEY (repo_id, sha)
 );
 """
@@ -83,7 +83,8 @@ def open_work_db(data_dir: Path) -> sqlite3.Connection:
     # Columns added after the first trial build; a work.db made before them gains them here.
     for table, column in (("repos", "project_key TEXT"), ("repos", "default_ref TEXT"), ("repos", "has_remote INTEGER"),
                           ("repos", "reach_tips TEXT"), ("repos", "dirty INTEGER"),
-                          ("repos", "dirty_checked_at TEXT"), ("repos", "remote_as_of TEXT")):
+                          ("repos", "dirty_checked_at TEXT"), ("repos", "remote_as_of TEXT"),
+                          ("commit_reach", "reachable INTEGER")):
         name = column.split()[0]
         if not conn.execute("SELECT 1 FROM pragma_table_info(?) WHERE name = ?", (table, name)).fetchone():
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column}")
