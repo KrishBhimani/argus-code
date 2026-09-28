@@ -27,3 +27,10 @@ def test_commit_counts_by_evidence():
 def test_untitled_story_falls_back_to_branch():
     (story,) = group_stories([S("a", "feat/x", "2026-09-01T10:00:00Z", "2026-09-01T10:30:00Z", title="")])
     assert story["title"] == "feat/x"
+
+
+def test_story_carries_key_and_latest_folder():
+    a = SessionSummary("claude_code:a", "A", "feat", "2026-09-01T10:00:00Z", "2026-09-01T11:00:00Z", 0, 1.0, 1, repo_id=4)
+    b = SessionSummary("claude_code:b", "B", "feat", "2026-09-02T10:00:00Z", "2026-09-02T11:00:00Z", 0, 1.0, 1, repo_id=7)
+    (st,) = group_stories([a, b], gap_days=2)
+    assert st["key"] == "claude_code:a" and st["repo_id"] == 7

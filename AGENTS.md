@@ -18,7 +18,8 @@ Argus is a **local-first** analytics dashboard for Claude Code (and other coding
 agents). A watcher ingests Claude Code's `.jsonl` session transcripts into a local
 SQLite archive (`~/.argus/argus.db`); a FastAPI server serves a static React
 dashboard at `http://localhost:4242`. No network, no telemetry, no LLM calls
-(except opt-in `argus pricing refresh`). Backend + dashboard ship together in the
+(except opt-in `argus pricing refresh`, and the work trial's opt-in GitHub PR
+status through the user's `gh` CLI). Backend + dashboard ship together in the
 `argus-code` wheel on PyPI.
 
 Orientation docs (prose, not contracts — read but don't duplicate into AGENTS.md):

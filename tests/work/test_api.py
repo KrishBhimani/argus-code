@@ -69,3 +69,29 @@ def test_projects_take_a_period(tmp_path):
     c = _client(tmp_path, work=True)
     assert c.get("/api/work/projects?days=0").status_code == 200
     assert c.get("/api/work/projects?days=-1").status_code == 400
+
+
+def test_threads_route(tmp_path):
+    conn = _world(tmp_path)
+    conn.execute("UPDATE repos SET default_ref = 'refs/heads/main' WHERE id = 1")
+    conn.execute("INSERT INTO commit_reach (repo_id, sha, on_default, pushed) VALUES (1, 'abc1234', 1, NULL)")
+    conn.close()
+    c = _client(tmp_path, work=True)
+    t = c.get("/api/work/threads?days=0").json()
+    assert t == {"open": [], "counts": {"shipped": 1, "open": 0, "dropped": 1}, "remote_as_of": None}
+    assert c.get("/api/work/threads?days=-1").status_code == 400
+    o = c.get("/api/work/projects/1/overview?days=0").json()
+    assert {s["state"] for s in o["stories"]} == {"shipped", "dropped"}
+
+
+def test_github_routes_share_the_switch(tmp_path, monkeypatch):
+    from argus.work import github
+    _world(tmp_path).close()
+    monkeypatch.setattr(github, "refresh", lambda conn, now: {"checked": 0, "error": None})
+    c = _client(tmp_path, work=True)
+    own = {"origin": "http://127.0.0.1:0"}      # the dashboard's own origin (the test app runs on port 0)
+    assert c.post("/api/work/github/enable", headers={"origin": "http://localhost:3000"}).status_code == 403
+    assert c.get("/api/work/github").json()["enabled"] is False
+    assert c.post("/api/work/github/enable", headers=own).json()["enabled"] is True
+    assert c.post("/api/work/github/refresh", headers=own).json()["result"] == {"checked": 0, "error": None}
+    assert c.post("/api/work/github/disable", headers=own).json()["enabled"] is False

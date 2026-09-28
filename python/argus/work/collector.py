@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..store.repository import normalize_project_path
-from . import gitscan
+from . import github, gitscan
 from .db import open_work_db, set_meta
 from .facts import GAP_CAP_MS, collect_facts
 from .linker import link_repo
@@ -143,16 +143,30 @@ def run_pass(data_dir: Path, adapter, now_iso: str | None = None) -> PassResult:
             set_meta(conn, "global_user_email", g.lower())
         for r in conn.execute("SELECT id, root FROM repos").fetchall():
             res.repos += 1
-            if not Path(r["root"]).is_dir():
+            present = Path(r["root"]).is_dir()
+            if not present:
                 conn.execute("UPDATE repos SET present = 0 WHERE id = ?", (r["id"],))
             else:
                 try:
                     res.commits += gitscan.scan_repo(conn, r["id"], r["root"], now)
                 except gitscan.GitError as e:
+                    present = False
                     conn.execute("UPDATE repos SET last_error = ? WHERE id = ?", (str(e), r["id"]))
                     res.errors[r["root"]] = str(e)
+            # Link before reading git state: the squash match looks only at commits a session made.
             for k, v in link_repo(conn, r["id"]).items():
                 res.links[k] += v
+            if present:
+                try:
+                    gitscan.refresh_git_state(conn, r["id"], r["root"], now)
+                except gitscan.GitError as e:
+                    conn.execute("UPDATE repos SET last_error = ? WHERE id = ?", (str(e), r["id"]))
+                    res.errors[r["root"]] = str(e)
+        try:   # opt-in; does nothing unless on and 30 min have passed since the last check
+            github.maybe_refresh(conn, now)
+        except Exception as e:  # noqa: BLE001  never stop the pass
+            logger.warning("work: github refresh failed: %s", e)
+            res.errors["github"] = str(e)
         set_meta(conn, "last_scan_at", now)
     finally:
         conn.close()

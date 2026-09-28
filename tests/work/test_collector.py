@@ -46,6 +46,8 @@ def test_end_to_end_pass_links_the_coauthored_commit(tmp_path):
     conn = open_work_db(data)
     links = {r["evidence"] for r in conn.execute("SELECT evidence FROM session_commits")}
     assert links == {"coauthored"}   # "fix: second" 09:30Z, 10 min after the 09:20Z turn
+    assert conn.execute("SELECT COUNT(*) FROM commit_reach").fetchone()[0] == 3
+    assert conn.execute("SELECT default_ref FROM repos").fetchone()[0] == "refs/heads/main"
 
 
 def test_session_cwd_in_subdir_maps_to_repo(tmp_path):
@@ -181,3 +183,38 @@ def test_prompt_titles_skip_paste_and_image_placeholders(tmp_path):
     run_pass(data, adapter, now_iso="2026-09-05T00:00:00Z")
     conn = open_work_db(data)
     assert conn.execute("SELECT title FROM session_facts WHERE session_id = ?", (sid,)).fetchone()[0] == "the window shows 235m"
+
+
+def test_the_scan_asks_github_only_through_maybe_refresh(tmp_path, monkeypatch):
+    from argus.work import github
+    repo = make_repo(tmp_path / "proj")
+    data, adapter = _world(tmp_path, repo)
+    asked: list = []
+    monkeypatch.setattr(github, "maybe_refresh", lambda conn, now: asked.append(now))
+    run_pass(data, adapter, now_iso="2026-09-05T00:00:00Z")
+    assert asked == ["2026-09-05T00:00:00Z"]
+
+
+def test_a_squash_that_landed_before_the_first_scan_is_found_in_that_scan(tmp_path):
+    """Linking runs before the git-state read, so the session's commits are candidates at once."""
+    repo = make_repo(tmp_path / "proj")
+    bare = tmp_path / "remote.git"
+    git(tmp_path, "init", "-q", "--bare", str(bare))
+    git(repo, "remote", "add", "origin", str(bare))
+    git(repo, "switch", "-q", "-c", "feat/x", "HEAD~2")                 # branch from "feat: first"
+    (repo / "b.py").write_text("work\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "feat: session work\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
+        date="2026-09-02T09:30:00Z")                                       # 10 min after the session's turn
+    git(repo, "switch", "-q", "main")
+    git(repo, "reset", "-q", "--hard", "HEAD~2")
+    git(repo, "merge", "-q", "--squash", "feat/x")
+    git(repo, "commit", "-q", "-m", "Session work, squashed", date="2026-09-03T10:00:00Z")
+    git(repo, "push", "-q", "origin", "main", "feat/x")
+    git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+    data, adapter = _world(tmp_path, repo)
+    run_pass(data, adapter, now_iso="2026-09-05T00:00:00Z")
+    conn = open_work_db(data)
+    row = conn.execute("""SELECT r.landed FROM commits c JOIN commit_reach r USING (repo_id, sha)
+                          WHERE c.subject = 'feat: session work'""").fetchone()
+    assert row["landed"] == 1

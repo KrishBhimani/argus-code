@@ -50,7 +50,11 @@ Argus is built for one user, one machine. It assumes:
 - **No external network calls.** The only outbound HTTP request in the
   entire codebase is `argus pricing refresh`, a manual command that
   fetches one JSON file from LiteLLM's GitHub. There is no telemetry,
-  no analytics, no embedding API, no LLM call.
+  no analytics, no embedding API, no LLM call. The one opt-in exception
+  is the work trial's GitHub PR status (`argus work github enable`, off
+  by default): it runs your own `gh` CLI to ask whether PRs your
+  sessions opened were merged or closed, sending only repo names and PR
+  numbers. Argus never reads or stores a GitHub token.
 
 ## Out of scope
 

@@ -22,6 +22,7 @@ class SessionSummary:
     output_tokens: int = 0
     whole: dict | None = None   # the whole session's totals when the range cuts it
     model: str | None = None
+    repo_id: int | None = None  # the folder the session ran in
 
 
 def _t(ts: str) -> float:
@@ -45,6 +46,8 @@ def _story(group: list[SessionSummary]) -> dict:
     for c in commits:
         ev[c["evidence"]] += 1
     return {
+        "key": group[0].session_id,   # stable while grouping rules hold: the thread's first session
+        "repo_id": max(group, key=lambda s: s.last_ts).repo_id,
         "title": lead.title or lead.branch or "Untitled session",
         "branch": lead.branch,
         "prs": sorted({p for s in group for p in s.prs}),
@@ -59,7 +62,9 @@ def _story(group: list[SessionSummary]) -> dict:
         "session_list": [{"session_id": s.session_id, "title": s.title, "model": s.model, "turns": s.turns,
                           "first_ts": s.first_ts, "last_ts": s.last_ts, "active_ms": s.active_ms,
                           "active_estimated": s.active_estimated} for s in group],
-        "commit_list": [{"sha": c["sha"], "subject": c.get("subject", ""), "evidence": c["evidence"]} for c in commits],
+        "commit_list": [{"sha": c["sha"], "subject": c.get("subject", ""), "evidence": c["evidence"],
+                         "on_default": c.get("on_default"), "pushed": c.get("pushed"),
+                         "reachable": c.get("reachable"), "landed": c.get("landed")} for c in commits],
         "first_ts": group[0].first_ts,
         "last_ts": max(s.last_ts for s in group),
         "commits": {"total": len(commits), **ev},
