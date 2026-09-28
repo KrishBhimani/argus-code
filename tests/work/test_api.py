@@ -69,3 +69,16 @@ def test_projects_take_a_period(tmp_path):
     c = _client(tmp_path, work=True)
     assert c.get("/api/work/projects?days=0").status_code == 200
     assert c.get("/api/work/projects?days=-1").status_code == 400
+
+
+def test_threads_route(tmp_path):
+    conn = _world(tmp_path)
+    conn.execute("UPDATE repos SET default_ref = 'refs/heads/main' WHERE id = 1")
+    conn.execute("INSERT INTO commit_reach VALUES (1, 'abc1234', 1, NULL)")
+    conn.close()
+    c = _client(tmp_path, work=True)
+    t = c.get("/api/work/threads?days=0").json()
+    assert t == {"open": [], "counts": {"shipped": 1, "open": 0, "dropped": 1}, "remote_as_of": None}
+    assert c.get("/api/work/threads?days=-1").status_code == 400
+    o = c.get("/api/work/projects/1/overview?days=0").json()
+    assert {s["state"] for s in o["stories"]} == {"shipped", "dropped"}
