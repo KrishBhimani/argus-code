@@ -52,6 +52,8 @@ daemon_app = typer.Typer(help="Background ingestion + detector daemon (argusd)")
 app.add_typer(daemon_app, name="daemon")
 work_app = typer.Typer(help="Work-analysis trial: git + session links (writes only ~/.argus/work.db)")
 app.add_typer(work_app, name="work")
+github_app = typer.Typer(help="GitHub PR status for threads (opt-in; asks through your gh CLI)")
+work_app.add_typer(github_app, name="github")
 
 
 def _setup_logging(quiet: bool = False, verbose: bool = False) -> None:
@@ -582,12 +584,66 @@ def work_status(data_dir: Path = typer.Option(_default_data_dir(), "--data-dir")
     """Show what the work-analysis trial has collected."""
     from .work.db import get_meta, open_work_db
 
+    from .work import github
+
     conn = open_work_db(data_dir)
     typer.echo(f"last scan: {get_meta(conn, 'last_scan_at') or 'never'}")
+    gh = github.status(conn)
+    typer.echo(f"GitHub: {'on' if gh['enabled'] else 'off'}"
+               + (f" · last checked {gh['checked_at']}" if gh["checked_at"] else ""))
+    if gh["last_error"]:
+        typer.echo(f"  ! {gh['last_error']}")
     for r in conn.execute("SELECT display_name, root, present, last_error FROM repos ORDER BY display_name"):
         flag = "" if r["present"] else "  (repo gone, archived)"
         err = f"  ! {r['last_error']}" if r["last_error"] else ""
         typer.echo(f"  {r['display_name']:<28} {r['root']}{flag}{err}")
+    conn.close()
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _github_report(result: dict) -> None:
+    typer.echo(f"checked {result['checked']} PR(s)")
+    if result["error"]:
+        typer.echo(f"  ! {result['error']}", err=True)
+
+
+@github_app.command("enable")
+def work_github_enable(data_dir: Path = typer.Option(_default_data_dir(), "--data-dir")) -> None:
+    """Turn GitHub PR status on and check now; then every 30 min during scans."""
+    from .work import github
+    from .work.db import open_work_db
+
+    conn = open_work_db(data_dir)
+    typer.echo("GitHub PR status: on")
+    _github_report(github.enable(conn, _now_iso()))
+    conn.close()
+
+
+@github_app.command("disable")
+def work_github_disable(data_dir: Path = typer.Option(_default_data_dir(), "--data-dir")) -> None:
+    """Turn GitHub PR status off (answers already fetched are kept)."""
+    from .work import github
+    from .work.db import open_work_db
+
+    conn = open_work_db(data_dir)
+    github.disable(conn)
+    typer.echo("GitHub PR status: off")
+    conn.close()
+
+
+@github_app.command("refresh")
+def work_github_refresh(data_dir: Path = typer.Option(_default_data_dir(), "--data-dir")) -> None:
+    """Check PR status on GitHub now and restart the 30-min clock (works even when off)."""
+    from .work import github
+    from .work.db import open_work_db
+
+    conn = open_work_db(data_dir)
+    _github_report(github.refresh(conn, _now_iso()))
     conn.close()
 
 
