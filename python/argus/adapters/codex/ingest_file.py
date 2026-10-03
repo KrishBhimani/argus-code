@@ -100,7 +100,10 @@ def ingest_codex_file(
     start, state = window_for(path, from_offset, cache)
     records, errors, end = read_records(path, start)
     if end <= from_offset:
-        return empty_result(path), from_offset
+        # Nothing new, but the header must still name the thread: the
+        # collector looks the session up by it to reconcile sub-agents.
+        meta_id = (state.meta or {}).get("id")
+        return empty_result(path, meta_id if isinstance(meta_id, str) else None), from_offset
 
     turns: list[RawTurnEvent] = []
     turn_task: dict[str, int | None] = {}

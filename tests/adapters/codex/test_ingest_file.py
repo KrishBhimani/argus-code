@@ -123,3 +123,17 @@ def test_usage_records_win_over_token_count(tmp_path: Path) -> None:
 def test_not_a_rollout_yields_nothing(tmp_path: Path) -> None:
     r, end = ingest_codex_file(_write(tmp_path, ['{"id":"legacy","instructions":""}']), 0, ContextCache())
     assert r.turns == [] and r.tool_calls == [] and end > 0
+
+
+def test_read_with_no_new_lines_still_reports_the_thread_id(tmp_path: Path) -> None:
+    """REGRESSION (PR #52 review): the collector keys the session by the
+    header's native id even when nothing new was read; the file stem
+    (rollout-...-<uuid>) is not the session's id."""
+    f = _write(tmp_path, session())
+    cache = ContextCache()
+    _, end = ingest_codex_file(f, 0, cache)
+    r, off = ingest_codex_file(f, end, cache)
+    assert (r.header.native_session_id, r.turns, off) == ("T", [], end)
+    # same with a cold cache (fresh adapter after a restart)
+    r2, _ = ingest_codex_file(f, end, ContextCache())
+    assert r2.header.native_session_id == "T"

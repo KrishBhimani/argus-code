@@ -125,6 +125,13 @@ Shapes were profiled on real rollouts (Codex Desktop, cli 0.159.2). Binding:
   `ordinal < subagent_history_start_ordinal` (or
   `history_base.end_ordinal_exclusive`) are copied history and skipped.
   `should_skip` is also true while a file's first line is incomplete.
+  Because child fs events are skipped, a child is re-read only on a parent
+  ingest — so a read of the parent with **no new lines must still report the
+  thread id** in its header (not the file stem), or the collector can't find
+  the session and never reconciles a child that kept writing after its parent
+  went quiet. `sub_session_files_for` rescans the sessions tree at most every
+  `SUB_REFRESH_INTERVAL_SEC` (it runs on every parent tick); discovery always
+  rescans, so a new child is picked up on a later parent tick or at startup.
 - **Privacy.** Never stored: reasoning, injected developer/user
   `response_item` messages, base instructions, `git.repository_url`.
   `ParseError.raw_line_truncated` is always `""`.

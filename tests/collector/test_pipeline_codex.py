@@ -60,6 +60,27 @@ def test_subagent_rolls_up_and_copied_history_is_skipped(tmp_path: Path, repo: R
     assert [t.id for t in repo.get_turns_for_session(f"codex:{P}")] == [f"codex:{P}:rp1"]
 
 
+def test_subagent_growth_after_parent_goes_quiet_is_ingested(tmp_path: Path, repo: Repository) -> None:
+    """REGRESSION (PR #52 review): a read of the parent with no new lines must
+    still report the thread id, so the pipeline finds the session and
+    reconciles its sub-agents. It reported the file stem instead, so a child
+    that kept writing after its parent stopped (child fs events are skipped
+    by design) was never re-read -- not even on later startups."""
+    root = tmp_path / ".codex"
+    day = root / "sessions" / "2026" / "10" / "04"
+    parent = _w(day / f"rollout-1-{P}.jsonl", [E(0, "session_meta", {"id": P, "cwd": "/p"}), TUR(1, "rp1", P)])
+    child = _w(day / f"rollout-2-{C}.jsonl",
+               [E(0, "session_meta", {"id": C, "parent_thread_id": P}), TUR(1, "rc1", C)])
+    table = load_pricing_table()
+    ingest_file(CodexAdapter(root), parent, repo, table)
+    assert repo.get_session(f"codex:{P}/{C}").turn_count == 1
+    with child.open("a", encoding="utf-8") as fh:
+        fh.write(TUR(2, "rc2", C) + "\n")
+    ingest_file(CodexAdapter(root), parent, repo, table)  # e.g. the next startup's first pass
+    assert repo.get_session(f"codex:{P}/{C}").turn_count == 2
+    assert repo.get_session(f"codex:{P}").turn_count == 3  # rollup follows
+
+
 def test_continuation_segment_merges_into_one_session(tmp_path: Path, repo: Repository) -> None:
     root = tmp_path / ".codex"
     day = root / "sessions" / "2026" / "10" / "02"
