@@ -15,7 +15,7 @@ import { shortPath } from '@/lib/format/format';
 import { cleanSnippet, splitMarks } from './cleanSnippet';
 
 const ROLES = [
-  { k: 'prompt', l: 'Your prompts' }, { k: 'user', l: 'Your replies' }, { k: 'assistant', l: 'Claude' }, { k: 'thinking', l: 'Thinking' }, { k: 'tool_result', l: 'Tool output' },
+  { k: 'prompt', l: 'Your prompts' }, { k: 'user', l: 'Your replies' }, { k: 'assistant', l: 'Assistant' }, { k: 'thinking', l: 'Thinking' }, { k: 'tool_result', l: 'Tool output' },
 ];
 const ROLE_KIND: Record<string, 'good' | 'info' | 'mute'> = { prompt: 'good', user: 'good', assistant: 'info' };
 const roleLabel = (r: string) => (r === 'assistant' ? 'claude' : r === 'prompt' || r === 'user' ? 'you' : r);
@@ -54,11 +54,11 @@ export default function SearchPage() {
     <>
       <TopBar crumbs={['Search', 'Transcripts']} />
       <Page>
-        <p className="text-ink-2 text-xs m-0">Searches every prompt you typed and every transcript Claude wrote. 100% local — SQLite FTS5, no embeddings, no API calls.</p>
+        <p className="text-ink-2 text-xs m-0">Searches every prompt you typed and every transcript your agents wrote. 100% local — SQLite FTS5, no embeddings, no API calls.</p>
         {idx.data && !idx.data.enabled && (
           <div className="flex items-center gap-3 border border-warn/30 bg-warn/8 rounded-md px-3.5 py-2.5 text-xs">
             <Pill kind="warn">INDEXING OFF</Pill>
-            <span className="text-ink-1">Only your prompts are searchable. Enable transcript indexing to search Claude's replies and tool output.</span>
+            <span className="text-ink-1">Only your prompts are searchable. Enable transcript indexing to search agent replies and tool output.</span>
             <Button className="ml-auto" onClick={() => enable.mutate()}>Enable indexing</Button>
           </div>
         )}

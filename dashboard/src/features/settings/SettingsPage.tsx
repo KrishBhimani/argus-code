@@ -29,7 +29,7 @@ export default function SettingsPage() {
           <div className="flex flex-col gap-3">
             <Panel title="Search indexing" sub={d ? (d.enabled ? 'on' : 'off') : ''}>
               <p className="text-xs text-ink-1 m-0 mb-3">
-                Indexes Claude's replies, thinking and tool output into a local FTS5 table so Transcripts search covers more than your prompts. Stored in <Mono>~/.argus/argus.db</Mono>; nothing leaves the machine.
+                Indexes agent replies, thinking and tool output into a local FTS5 table so Transcripts search covers more than your prompts. Stored in <Mono>~/.argus/argus.db</Mono>; nothing leaves the machine.
               </p>
               {d && (
                 <div className="text-xs font-mono text-ink-1 flex flex-col gap-1 mb-3">

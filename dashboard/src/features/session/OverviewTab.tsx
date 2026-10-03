@@ -3,6 +3,7 @@ import { Panel } from '@/components/ui/Panel';
 import { Bars } from '@/components/charts/Bars';
 import { fmtLocalDateTime, num } from '@/lib/format/format';
 import { CopyId } from '@/components/ui/CopyId';
+import { agentLabel } from '@/lib/agents';
 import { cacheRatio, toolMix } from './model';
 
 export function OverviewTab({ session: s, turns }: { session: Session; turns: TimelineTurn[] }) {
@@ -10,7 +11,7 @@ export function OverviewTab({ session: s, turns }: { session: Session; turns: Ti
   const meta: [string, string][] = [
     ['Project', s.project_path],
     ['Primary model', s.primary_model],
-    ['Claude Code', s.agent_version ?? '—'],
+    [agentLabel(s.agent), s.agent_version ?? '—'],
     ['Started', `${fmtLocalDateTime(s.started_at)} (${tz})`],
     ['Ended', s.ended_at ? fmtLocalDateTime(s.ended_at) : 'running'],
     ['Fresh input', `${num(s.total_fresh_input_tokens)} tokens`],
