@@ -10,7 +10,9 @@ contributor's map.
 Claude Code writes a `.jsonl` file every time you use it, one file per
 session, at `~/.claude/projects/<project>/<session-id>.jsonl`. Each
 line is one event: a user message, an assistant reply, a tool call, or
-a tool result.
+a tool result. Codex writes one rollout per thread under
+`$CODEX_HOME/sessions/YYYY/MM/DD/` (default `~/.codex`), one JSON envelope
+per line; its adapter (`adapters/codex/`) feeds the same pipeline.
 
 Argus is two things:
 
@@ -278,9 +280,11 @@ A few patterns to absorb before adding code:
 - **Adapter registry.** Adapter classes self-register via the
   `@register` decorator (`python/argus/adapters/registry.py`).
   `available_adapters()` returns every registered class whose
-  `is_present()` is True. Adding a new adapter (Codex, OpenClaw,
-  Hermes, …) is one new folder + one `@register` — zero edits to CLI,
-  watcher, pipeline, or server.
+  `is_present()` is True. Shipped: `claude_code` and `codex`. Adding a
+  new adapter (OpenClaw, Hermes, …) is one new folder + one `@register` —
+  zero edits to CLI, watcher, pipeline, or server. Define every protocol
+  method (the optional hooks too) and `native_session_id()` when the file
+  name isn't the session id; see `adapters/AGENTS.md`.
 
 ## Where things live
 
@@ -291,6 +295,7 @@ python/argus/
     base.py                 Adapter protocol + ParseError
     registry.py             @register + available_adapters()
     claude_code/            JSONL parsers, discovery, history.jsonl
+    codex/                  rollout reader, thread index, per-file fold state
   collector/                pipeline, watcher, first-run, backfills, alert scheduler
   detectors/                alert detectors (pure reads) + @register registry
   scaffold/                 argus claude: template storage / init / snapshot
@@ -342,6 +347,6 @@ tests/                      pytest suite, mirrors python/argus/ layout
 | Parse a new JSONL field | `python/argus/adapters/claude_code/schemas.py` (pydantic), wire into `pipeline.py` |
 | Tweak cost computation | `python/argus/pricing/compute.py`, then re-ingest to recompute via a backfill |
 | Add a new chart | `dashboard/src/components/charts/` (read its `README.md` first; series colours in `uplotTheme.ts`) |
-| Add a new adapter (Codex, OpenClaw, Hermes, …) | New folder `python/argus/adapters/<agent>/` + `@register class` in `adapter.py`. No edits to CLI / watcher / pipeline / server. |
+| Add a new adapter (OpenClaw, Hermes, …) | New folder `python/argus/adapters/<agent>/` + `@register class` in `adapter.py`. No edits to CLI / watcher / pipeline / server. |
 | Add an alert detector | New file in `python/argus/detectors/` with a `@register` class whose pure `detect()` returns `Finding`s, plus the side-effect import in `detectors/__init__.py`. The scheduler picks it up automatically. |
 | Change the bundled scaffold template | Edit files under `templates/default/`; they're force-included into the wheel. New top-level dirs need a `force-include` entry in `pyproject.toml`. |

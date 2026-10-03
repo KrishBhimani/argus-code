@@ -1,4 +1,4 @@
-# AGENTS.md — adapters (Claude Code transcript adapter)
+# AGENTS.md — adapters (Claude Code + Codex)
 
 Parent: `python/argus/AGENTS.md`. Parses agent transcript files into typed results.
 
@@ -8,7 +8,21 @@ Parent: `python/argus/AGENTS.md`. Parses agent transcript files into typed resul
 ingests files, `schemas.py` validates each line (`AssistantLine`, `UserLine`, …),
 `extract_transcript.py` derives searchable segments.
 
-## Local Contracts
+`codex/` reads Codex rollouts (`$CODEX_HOME/sessions`, `archived_sessions`):
+`lines.py` (envelope reader), `discover.py` (home, containment, `ThreadIndex`),
+`records.py` (pure per-record interpretation), `state.py` (the per-file fold and
+`ContextCache`), `ingest_file.py` (one read → `AdapterIngestResult`), `adapter.py`
+(`CodexAdapter`, `agent = "codex"`).
+
+Every adapter class must define **all** protocol methods, including the optional
+hooks (`extra_watch_paths`, `ingest_extra`, `sub_session_files_for`,
+`should_skip`, `normalize_model_name`, `native_session_id`): the collector calls
+them directly and a `Protocol`'s default bodies are not inherited.
+`native_session_id(path)` is the agent's own id for a file (Claude: the stem);
+the collector keys sub-session ids and backfill lookups on it
+(`base.native_session_id_for` falls back to the stem for adapters without it).
+
+## Claude Code (`claude_code/`)
 
 - **Discovery excludes sub-agent files.** `discover_session_files()` returns
   top-level session files only; sub-agent transcripts are reached via
@@ -49,7 +63,7 @@ ingests files, `schemas.py` validates each line (`AssistantLine`, `UserLine`, �
   in `extract_turns.py` reads that claim into `metadata.origin_session_id`; the
   claim alone is not proof (real non-copied lines can differ on `session_id`),
   so the collector decides — the adapter only reports.
-- **Known data limitation — do not design against it:** sub-agent ids are exactly
+- **Known data limitation (Claude Code) — do not design against it:** sub-agent ids are exactly
   one level deep, and there is no stored workflow grouping or spawn-turn link.
   Don't build features that assume a nested sub-agent tree or a spawn→child edge;
   the data isn't there.
@@ -67,7 +81,65 @@ ingests files, `schemas.py` validates each line (`AssistantLine`, `UserLine`, �
   takes `claude_root` and filters — required, not optional, so a new caller must
   confront it. Covers symlinks and NTFS junctions alike (both resolve out).
 
+## Codex (`codex/`)
+
+Shapes were profiled on real rollouts (Codex Desktop, cli 0.159.2). Binding:
+
+- **Home and reads.** Root is `$CODEX_HOME`, else `~/.codex`; a set-but-missing
+  `CODEX_HOME` means the adapter is absent (never fall back to `~/.codex`). Only
+  `sessions/` and `archived_sessions/` are read. Never opened: `auth.json`,
+  `*.sqlite*`, `config.toml`, `memories/`, `log/`, `plugins/`, `skills/`,
+  `history.jsonl`. Containment (`contained()`) is enforced in
+  `CodexAdapter.ingest_file`, the single choke point, as for Claude.
+- **Identity** is the first record's `session_meta.id` (thread id), never the
+  file name. One thread may span several files (continuation segments
+  `<thread>_<suffix>.jsonl`); each keeps its own offset and all feed one session
+  `codex:<thread>`. `native_session_id()` returns the thread id.
+- **Turn = one `token_usage_record`** (`native_turn_id = response_id`,
+  `sequence` = the record's byte offset). `input_tokens` includes cached and
+  cache-write tokens; `output_tokens` includes reasoning. `event_msg/token_count`
+  is a fallback only for files with no usage record earlier in the file, and only
+  when `total_token_usage.total_tokens` advanced (real files repeat it). Model
+  and effort come from the `turn_context` with the same Codex `turn_id`, else the
+  latest one, else `thread_settings_applied`, else `"unknown"`.
+- **Tool calls** come from `item_completed` items (`CommandExecution` → `shell`,
+  `FileChange` → `apply_patch`, `McpToolCall` → `mcp__<server>__<tool>`,
+  `Extension` → its `kind`, `ImageView` → `view_image`) plus model-side calls
+  other than the `exec`/`wait` code-mode wrappers. `mcp__*`-namespaced function
+  calls are not counted (their `McpToolCall` item is). A request is assigned to
+  the usage record that follows it in its task; an item to the one before it.
+  `is_error` only on explicit signals (non-zero `exit_code`, failed status,
+  `result.isError`).
+- **Chunked == one pass.** Every read starts at `window_for()`: if a Codex task
+  (`task_started` … `task_complete`/`turn_aborted`) is still open at the stored
+  offset, the read re-parses it from its start, so a task's usage records and
+  items are always seen together and re-emitted (idempotently, keyed by Codex
+  ids) until it ends. The same `FileState.apply` fold drives the head scan and
+  the read; `ContextCache` is only an optimisation (a miss rescans the head).
+  Guarded by `tests/collector/test_codex_incremental_invariant.py`.
+- **Sub-agents.** A child is a file whose first `session_meta` names a parent
+  (`parent_thread_id` or `source.subagent.thread_spawn.parent_thread_id`). It is
+  skipped by discovery and the watcher and reached via `sub_session_files_for`,
+  flattened under its top-level ancestor as `codex:<root>/<child>` (depth,
+  nickname, role, path kept in metadata). Records with
+  `ordinal < subagent_history_start_ordinal` (or
+  `history_base.end_ordinal_exclusive`) are copied history and skipped.
+  `should_skip` is also true while a file's first line is incomplete.
+- **Privacy.** Never stored: reasoning, injected developer/user
+  `response_item` messages, base instructions, `git.repository_url`.
+  `ParseError.raw_line_truncated` is always `""`.
+- **Known limits.** Long-context (>272K input) pricing tier not modelled;
+  `gpt-5-codex` is unpriced ($0). Files with no task markers are not re-parsed
+  per task, so a tool call split from its response by a read boundary may stay
+  unassigned to a turn. `history.jsonl` prompts are not ingested (needs a
+  migration). A child whose parent file is gone is not shown. A session's
+  `started_at` is fixed by the first file ingested, so a continuation segment
+  ingested before its original file (out of discovery order) keeps the later
+  start. `.jsonl.zst` rollouts are not read.
+
 ## Verification
 
-`uv run pytest tests/adapters`. Real-`~/.claude/` tests are gated by
-`ARGUS_REAL_CLAUDE_ROOT` and skipped otherwise.
+`uv run pytest tests/adapters`. Real-data tests are opt-in:
+`ARGUS_REAL_CLAUDE_ROOT` (a real `~/.claude/`) and `ARGUS_REAL_CODEX_ROOT` (a real
+Codex home; cross-checks stored output tokens against the rollouts' usage
+records).

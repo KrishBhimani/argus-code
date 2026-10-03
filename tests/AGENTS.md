@@ -27,7 +27,10 @@ this doc is the binding conventions.
 - **Platform/opt-in skips are expected:** POSIX-only signal tests skip on Windows;
   `os.symlink` tests skip without the Windows symlink privilege (the equivalent
   NTFS-junction cases still run); real-environment tests are gated by
-  `ARGUS_REAL_CLAUDE_ROOT`.
+  `ARGUS_REAL_CLAUDE_ROOT` and `ARGUS_REAL_CODEX_ROOT`.
+- **Tests never see the real `~/.codex`.** An autouse fixture in `conftest.py`
+  points `CODEX_HOME` at a missing directory (adapter absent); Codex tests pass
+  an explicit root to `CodexAdapter(root)`.
 - **Never assert on scheduling luck.** Wait for the exact thing you assert on,
   not a proxy for it, and budget the wait generously — a tight poll is a claim
   about machine speed, not about the code. Two tests broke this and only failed
