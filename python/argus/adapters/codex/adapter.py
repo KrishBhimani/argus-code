@@ -3,12 +3,16 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..base import AdapterIngestResult
 from ..registry import register
 from .discover import SESSION_DIRS, ThreadIndex, codex_home, contained
 from .ingest_file import empty_result, ingest_codex_file
 from .state import ContextCache
+
+if TYPE_CHECKING:
+    from ...store.repository import Repository
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +43,14 @@ class CodexAdapter:
             logger.warning("refusing to ingest a path outside the codex session dirs: %s", path)
             return empty_result(path), from_offset
         return ingest_codex_file(path, from_offset, self._cache)
+
+    # The collector calls these hooks directly and Protocol bodies are not
+    # inherited, so they must be defined even as no-ops.
+    def extra_watch_paths(self) -> list[Path]:
+        return []  # history.jsonl is deferred (it needs a prompts migration)
+
+    def ingest_extra(self, path: Path, repo: "Repository") -> None:
+        return None
 
     def sub_session_files_for(self, session_file: Path) -> list[Path]:
         self._index.refresh()

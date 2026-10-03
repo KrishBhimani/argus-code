@@ -66,3 +66,16 @@ def test_ingest_refuses_paths_outside_session_dirs(tmp_path: Path) -> None:
     outside = _write(tmp_path / "evil.jsonl", _meta("E"))
     r, off = CodexAdapter(root).ingest_file(outside, 0)
     assert r.turns == [] and r.parse_errors == [] and off == 0
+
+
+def test_defines_every_adapter_protocol_method(tmp_path: Path) -> None:
+    """The collector calls the optional protocol hooks directly (e.g.
+    first_run walks extra_watch_paths() of every present adapter), and a
+    Protocol's default bodies are not inherited, so each must exist here."""
+    a = CodexAdapter(tmp_path)
+    for name in ("root_path", "is_present", "discover_session_files", "ingest_file",
+                 "extra_watch_paths", "ingest_extra", "sub_session_files_for",
+                 "should_skip", "normalize_model_name", "native_session_id"):
+        assert callable(getattr(a, name, None)), name
+    # history.jsonl ingestion is deferred (needs a migration): nothing to tail.
+    assert a.extra_watch_paths() == []
