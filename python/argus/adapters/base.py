@@ -108,6 +108,21 @@ class Adapter(Protocol):
         """Watcher predicate — true to silently ignore events on this path."""
         return False
 
+    def native_session_id(self, path: Path) -> str:
+        """Native session id for a top-level or sub-session file.
+
+        Defaults to the file stem (Claude Code's file name *is* its session
+        id). Adapters whose id lives inside the file (Codex: the thread id in
+        the first record) override it."""
+        return path.stem
+
     def normalize_model_name(self, raw: str) -> str:
         """Map raw model identifier to the form the pricing table keys on."""
         return raw
+
+
+def native_session_id_for(adapter: Adapter, path: Path) -> str:
+    """``adapter.native_session_id(path)``, or the stem for adapters that
+    don't define it (structural typing: the Protocol body is not inherited)."""
+    fn = getattr(adapter, "native_session_id", None)
+    return fn(path) if callable(fn) else path.stem

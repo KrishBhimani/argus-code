@@ -14,6 +14,7 @@ from ..adapters.base import Adapter
 from ..pricing.types import PricingTable
 from ..store.repository import Repository
 from .pipeline import ingest_file
+from .session_files import files_by_session
 
 
 @dataclass
@@ -92,13 +93,8 @@ def run_segment_backfill(
         _stop.clear()
 
     try:
-        # Build basename → (adapter, file) map for top-level claude_code files.
-        file_by_basename: dict[str, tuple[Adapter, "object"]] = {}
-        for a in adapters:
-            if a.agent != "claude_code":
-                continue
-            for f in a.discover_session_files():
-                file_by_basename[f.stem] = (a, f)
+        # "<agent>:<native id>" -> every top-level file of that session.
+        files = files_by_session(adapters)
 
         candidates = [
             c for c in repo.sessions_missing_segments(1000) if "/" not in c["id"]
@@ -117,31 +113,24 @@ def run_segment_backfill(
             for c in candidates:
                 if _stop.is_set():
                     break
-                id_ = c["id"]
-                colon = id_.find(":")
-                if colon < 0:
+                matches = files.get(c["id"])
+                if not matches:
                     with _lock:
                         _state.processed += 1
                     continue
-                native = id_[colon + 1 :]
-                match = file_by_basename.get(native)
-                if match is None:
-                    with _lock:
-                        _state.processed += 1
-                    continue
-                adapter, file = match
-                repo.set_file_offset(str(file), 0)
-                try:
-                    ingest_file(adapter, file, repo, table)  # type: ignore[arg-type]
-                except Exception as e:  # noqa: BLE001
-                    repo.record_parse_error(
-                        {
-                            "file": str(file),
-                            "byte_offset": -1,
-                            "reason": f"[search-backfill] {e}",
-                            "raw_line_truncated": "",
-                        }
-                    )
+                for adapter, file in matches:
+                    repo.set_file_offset(str(file), 0)
+                    try:
+                        ingest_file(adapter, file, repo, table)  # type: ignore[arg-type]
+                    except Exception as e:  # noqa: BLE001
+                        repo.record_parse_error(
+                            {
+                                "file": str(file),
+                                "byte_offset": -1,
+                                "reason": f"[search-backfill] {e}",
+                                "raw_line_truncated": "",
+                            }
+                        )
                 with _lock:
                     _state.processed += 1
         finally:
