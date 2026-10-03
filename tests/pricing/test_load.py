@@ -8,7 +8,7 @@ from argus.pricing.load import _latest_table_file, load_pricing_table
 
 def test_loads_bundled_pricing_json():
     t = load_pricing_table()
-    assert t.version == "2026-09-22"
+    assert t.version == "2026-10-04"
     assert t.models["claude-opus-4-7"].input == 5
     assert t.models["gpt-5.3-codex"].output == 14
 
@@ -86,3 +86,45 @@ def test_bundled_table_wins_when_user_table_is_older(tmp_path):
 
 def test_missing_user_dir_falls_back_to_bundled(tmp_path):
     assert load_pricing_table(user_dir=tmp_path / "nope").version == load_pricing_table().version
+
+
+def test_bundled_table_prices_openai_models():
+    """Codex adapter: OpenAI standard-tier, short-context rates per
+    developers.openai.com/api/docs/pricing (checked 2026-10-04). A model whose
+    page lists no cached-input price gets no cache discount (cache_read = input).
+    gpt-5-codex is deliberately absent (not on the page; user decision)."""
+    m = load_pricing_table().models
+    expect = {  # model: (input, cached, output, cache_write or None)
+        "gpt-6-astra": (10, 1.00, 50, 12.5),
+        "gpt-6.1-sol": (2, 0.10, 10, 2.5),
+        "gpt-6-sol": (2, 0.20, 10, 2.5),
+        "gpt-6-luna": (0.10, 0.01, 0.50, 0.125),
+        "gpt-5.6-sol": (4, 0.40, 20, 5),
+        "gpt-5.6-terra": (2, 0.20, 12, 2.5),
+        "gpt-5.6-luna": (0.20, 0.02, 1.20, 0.25),
+        "gpt-5.5": (5, 0.50, 30, None),
+        "gpt-5.5-pro": (30, 30, 180, None),
+        "gpt-5": (1.25, 0.125, 10, None),
+        "gpt-5-mini": (0.25, 0.025, 2, None),
+        "gpt-5-nano": (0.05, 0.005, 0.40, None),
+        "o3": (2, 0.50, 8, None),
+        "o4-mini": (1.10, 0.275, 4.40, None),
+        "gpt-4.1": (2, 0.50, 8, None),
+    }
+    for model, (i, r, o, w) in expect.items():
+        p = m[model]
+        assert (p.input, p.cache_read, p.output) == (i, r, o), model
+        assert p.cache_write_5m == w and p.cache_write_1h == w, model
+    assert "gpt-5-codex" not in m
+
+
+def test_new_table_keeps_every_previous_price():
+    """REGRESSION guard for the Codex pricing bump: nothing already priced may
+    change — Claude Code costs must be identical before and after."""
+    import json
+    from argus.pricing.load import _bundled_dir
+
+    old = json.loads((_bundled_dir() / "2026-09-22.json").read_text(encoding="utf-8"))["models"]
+    new = load_pricing_table().models
+    for model, prices in old.items():
+        assert new[model].model_dump(exclude_none=True) == {k: v for k, v in prices.items()}, model
