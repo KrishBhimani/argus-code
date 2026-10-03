@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -16,6 +17,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Minimum gap between sessions-tree rescans triggered by the pipeline's
+#: per-tick sub-agent lookup. A new child file is found on a later parent tick
+#: (or at the next startup's discovery, which always rescans).
+SUB_REFRESH_INTERVAL_SEC = 2.0
+
 
 @register
 class CodexAdapter:
@@ -25,6 +31,7 @@ class CodexAdapter:
         self._root = (root or codex_home()).resolve(strict=False)
         self._index = ThreadIndex(self._root)
         self._cache = ContextCache()
+        self._last_refresh = float("-inf")
 
     def root_path(self) -> Path:
         return self._root
@@ -32,8 +39,12 @@ class CodexAdapter:
     def is_present(self) -> bool:
         return any((self._root / d).is_dir() for d in SESSION_DIRS)
 
-    def discover_session_files(self) -> list[Path]:
+    def _refresh(self) -> None:
         self._index.refresh()
+        self._last_refresh = time.monotonic()
+
+    def discover_session_files(self) -> list[Path]:
+        self._refresh()
         return self._index.top_level_files()
 
     def ingest_file(self, path: Path, from_offset: int = 0) -> tuple[AdapterIngestResult, int]:
@@ -53,7 +64,11 @@ class CodexAdapter:
         return None
 
     def sub_session_files_for(self, session_file: Path) -> list[Path]:
-        self._index.refresh()
+        # Called on every parent ingest tick: a full rglob of the user's whole
+        # Codex history each time would make live ticks pay for it, so rescans
+        # are throttled. Already-indexed children are returned regardless.
+        if time.monotonic() - self._last_refresh >= SUB_REFRESH_INTERVAL_SEC:
+            self._refresh()
         return self._index.descendant_files(session_file)
 
     def should_skip(self, path: Path) -> bool:

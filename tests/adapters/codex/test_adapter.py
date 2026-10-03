@@ -79,3 +79,31 @@ def test_defines_every_adapter_protocol_method(tmp_path: Path) -> None:
         assert callable(getattr(a, name, None)), name
     # history.jsonl ingestion is deferred (needs a migration): nothing to tail.
     assert a.extra_watch_paths() == []
+
+
+def test_sub_session_lookup_rescans_at_most_once_per_interval(tmp_path: Path, monkeypatch) -> None:
+    """PR #52 review: the pipeline asks for sub-agent files on every parent
+    tick; a full rglob of the sessions tree each time made every live tick
+    pay for the user's whole Codex history. Rescans are throttled; discovery
+    (startup) always rescans, so nothing is missed for longer than the
+    interval or past a restart."""
+    import argus.adapters.codex.adapter as mod
+
+    root = tmp_path / ".codex"
+    top = _write(root / "sessions" / "rollout-1-P.jsonl", _meta("P"))
+    a = CodexAdapter(root)
+    calls = []
+    real = a._index.refresh
+    monkeypatch.setattr(a._index, "refresh", lambda: (calls.append(1), real())[1])
+    now = [1000.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: now[0])
+
+    assert a.sub_session_files_for(top) == []
+    child = _write(root / "sessions" / "rollout-2-C.jsonl", _meta("C", parent_thread_id="P"))
+    now[0] += 0.5
+    assert a.sub_session_files_for(top) == []  # throttled: not rescanned yet
+    now[0] += mod.SUB_REFRESH_INTERVAL_SEC
+    assert a.sub_session_files_for(top) == [child]
+    assert len(calls) == 2
+    a.discover_session_files()  # discovery always rescans
+    assert len(calls) == 3
