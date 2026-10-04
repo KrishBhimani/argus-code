@@ -46,7 +46,15 @@ argus start
 
 Your browser opens once the first pass finishes (5–10 s for a typical install). From
 then on, every session you run is ingested live. All you need is Python ≥ 3.11 and a
-`~/.claude/` directory — i.e. you've used Claude Code at least once.
+`~/.claude/` directory or a Codex home — i.e. you've used Claude Code or Codex at least once.
+
+**Codex too.** Argus also reads OpenAI Codex rollouts from `$CODEX_HOME` (default
+`~/.codex`; only `sessions/` and `archived_sessions/` are read — never `auth.json`,
+config or state databases). Codex sessions get the same treatment: per-response
+turns and estimated cost (OpenAI's standard-tier API rates; Codex plans are usually
+billed differently, so treat it as an API-equivalent figure), tool health, and
+sub-agents folded under their parent thread. With both agents present the Sessions
+page gains an agent filter and column.
 
 ## ✨ Why Argus
 
@@ -262,7 +270,7 @@ Argus keeps its own copy regardless — this only widens what Claude itself reta
 ## 📋 Requirements
 
 - **Python ≥ 3.11** with an FTS5-enabled `sqlite3` (the standard CPython builds for macOS, Linux and Windows all are; Argus checks at startup and says so clearly if not).
-- A `~/.claude/` directory with real session JSONL — i.e. you've used Claude Code at least once.
+- A `~/.claude/` directory with real session JSONL, or a Codex home (`$CODEX_HOME`, default `~/.codex`) with rollouts under `sessions/`.
 
 ## 🛠️ Development
 
@@ -284,7 +292,7 @@ wheel, so end users never touch `npm`. See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ```
 python/argus/         Python ingest, store, server, CLI
-  adapters/           Claude Code JSONL parsers + adapter registry
+  adapters/           Claude Code + Codex parsers + adapter registry
   store/              SQLite schema + migrations + repo
   server/             FastAPI app + /api routes
   collector/          watcher + pipeline + first-run + search backfill + alert scheduler

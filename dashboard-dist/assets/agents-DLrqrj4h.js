@@ -1,0 +1,1 @@
+const o={claude_code:"Claude Code",codex:"Codex"},t=e=>o[e]??e,u=e=>e.includes(":")?e.slice(0,e.indexOf(":")):"claude_code";function a(e,n){return e==="claude_code"?`claude --resume ${n}`:e==="codex"?`codex resume ${n}`:null}function s(e){const n=[...new Set(e.map(c=>c.agent))].sort();return n.length>1?n:[]}export{t as a,s as b,u as c,a as r};

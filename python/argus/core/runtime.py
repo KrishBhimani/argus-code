@@ -87,11 +87,11 @@ class CoreRuntime:
         if not self.adapters:
             if require_adapters:
                 raise NoAdaptersError(
-                    "No adapter data found. Argus expects ~/.claude/ (Claude Code) "
-                    "to be present at minimum."
+                    "No agent data found. Argus reads Claude Code from ~/.claude/ "
+                    "and Codex from $CODEX_HOME or ~/.codex/ -- run one of them first."
                 )
             logger.warning(
-                "No agent data found (~/.claude/ is missing). Staying up and "
+                "No agent data found (~/.claude/ or ~/.codex/). Staying up and "
                 "watching for it — ingest starts automatically once it appears."
             )
             return

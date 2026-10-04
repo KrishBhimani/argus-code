@@ -17,6 +17,7 @@ import { cumulativeCost, orderTurns, turnHasError } from './model';
 import { OverviewTab } from './OverviewTab';
 import { TimelineTab } from './TimelineTab';
 import { SubagentsTab } from './SubagentsTab';
+import { agentLabel } from '@/lib/agents';
 
 export type Tab = 'overview' | 'timeline' | 'subagents';
 
@@ -57,7 +58,7 @@ export default function SessionPage() {
           onChange={setTab}
         />
         {sess && <Pill kind="mute">{sess.primary_model}</Pill>}
-        {sess?.agent_version && <Pill kind="mute">Claude Code {sess.agent_version}</Pill>}
+        {sess?.agent_version && <Pill kind="mute">{agentLabel(sess.agent)} {sess.agent_version}</Pill>}
       </TopBar>
       <Page>
         {!sess ? (

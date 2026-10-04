@@ -4,7 +4,7 @@ Parent: repo-root `AGENTS.md`. Read it first for the workflow and global rules.
 
 ## Purpose
 
-The `argus` package: ingest Claude Code transcripts, store them in SQLite, serve
+The `argus` package: ingest Claude Code and Codex transcripts, store them in SQLite, serve
 the dashboard, and provide the `argus` CLI. Runs directly from source
 (`uv run argus start`) — no build step. Entry point: `argus = "argus.cli:app"`.
 
@@ -50,8 +50,10 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   $0 turns of now-listed models **from their stored token columns** and
   recomputes those sessions (sub-agents before parents). That's needed because
   their transcripts are often already deleted, so the re-read backfill can't
-  reach them. New model prices come from
-  Anthropic's published per-MTok rates — don't copy LiteLLM numbers unverified.
+  reach them. New model prices come from the vendor's published per-MTok rates
+  (Anthropic; OpenAI standard tier, short context, for Codex models; a single
+  OpenAI cache-write price fills both `cache_write_5m`/`_1h`) — don't copy
+  LiteLLM numbers unverified.
 - `scaffold/` — `argus claude` scaffolding (templates, snapshot, storage).
   **`template create` copies only what `plan_snapshot()` lists**: one walk over
   top-level files and the chosen subfolders, at every depth, that never follows
@@ -72,7 +74,8 @@ Delegated subtrees (see their own AGENTS.md): `store/`, `collector/`, `adapters/
   user-facing command, keep the old name as a `hidden=True` alias and nudge to the
   new one (precedent: `search` → `indexing`). Update help strings, the daemon
   read-only API hint, and dashboard copy together.
-- **A missing `~/.claude` is fatal for `argus start` but not for `argusd`.**
+- **No agent data (neither `~/.claude` nor a Codex home) is fatal for `argus start`
+  but not for `argusd`.**
   `CoreRuntime.start(require_adapters=True)` (the foreground default) raises
   `NoAdaptersError` — immediate, readable feedback. The daemon
   (`daemon/service.py`) passes `require_adapters=False`, comes up idle with the
@@ -110,5 +113,5 @@ Delegated subtrees (see their own AGENTS.md): `store/`, `collector/`, `adapters/
 
 - `store/AGENTS.md` — SQLite, migrations, repository; data-safety + path normalization.
 - `collector/AGENTS.md` — ingest pipeline and missing-data backfill.
-- `adapters/AGENTS.md` — Claude Code adapter and transcript-segment extraction.
+- `adapters/AGENTS.md` — Claude Code and Codex adapters, transcript-segment extraction.
 - `server/AGENTS.md` — FastAPI routes, static serving, clean shutdown.
