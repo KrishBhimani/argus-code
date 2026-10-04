@@ -1,4 +1,4 @@
-import { agentLabel, agentOfId, agentOptions, resumeCommand } from './agents';
+import { agentLabel, agentOfId, agentOptions, agentShortName, resumeCommand } from './agents';
 import { mk } from '@/lib/analysis/testutil';
 
 it('labels known agents and passes unknown ones through', () => {
@@ -21,4 +21,10 @@ it('gives each agent its own resume command', () => {
 it('offers an agent filter only when more than one agent is present', () => {
   expect(agentOptions([mk({ id: 'claude_code:a' }), mk({ id: 'claude_code:b' })])).toEqual([]);
   expect(agentOptions([mk({ id: 'claude_code:a' }), mk({ id: 'codex:b', agent: 'codex' })])).toEqual(['claude_code', 'codex']);
+});
+
+it('gives a compact pill name per agent', () => {
+  expect(agentShortName('claude_code')).toBe('claude');
+  expect(agentShortName('codex')).toBe('codex');
+  expect(agentShortName('hermes')).toBe('hermes');
 });

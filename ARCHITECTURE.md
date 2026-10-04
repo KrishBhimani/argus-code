@@ -156,8 +156,9 @@ python/argus/collector/scheduler.py  the ONLY writer of alerts; runs every
 python/argus/server/api.py           GET /api/alerts, GET /api/alerts/unseen,
         │                            POST /api/alerts/{id}/seen
         ▼
-dashboard "What needs attention"     card (hidden when empty) + a browser
-                                     Notification on unseen critical findings
+dashboard "What needs attention"     card on Overview + an unseen-count badge
+                                     on the sidebar's Alerts link (no browser
+                                     notifications)
 ```
 
 Rules that matter:
