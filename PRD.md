@@ -1,8 +1,10 @@
 > **Historical document.** This is the original planning PRD, kept for the
 > design rationale. It predates several decisions that went the other way and
 > is **not** an accurate description of what shipped. Notably: distribution is
-> PyPI (`pip install argus-code`), not npm; the only supported agent is Claude
-> Code, not Claude Code + Codex. For what Argus actually does today, read
+> PyPI (`pip install argus-code`), not npm; Codex support shipped later (0.7.0)
+> with a different design from the one sketched here — its rollout schema,
+> usage source and sub-agent layout are documented in
+> `python/argus/adapters/AGENTS.md`. For what Argus actually does today, read
 > [README.md](./README.md) and [ARCHITECTURE.md](./ARCHITECTURE.md).
 
 # Argus — Product Requirements Document (v0.2, MVP)
