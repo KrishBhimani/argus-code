@@ -24,13 +24,20 @@ security fixes. Pinning to an older 0.x is at your own risk.
 Argus is built for one user, one machine. It assumes:
 
 - **Trusted local environment.** Anyone with shell access to your
-  account can already read `~/.claude/`, so Argus reading the same
-  files isn't an additional privilege.
+  account can already read `~/.claude/` and `~/.codex/`, so Argus
+  reading the same files isn't an additional privilege.
+- **Least read access.** From a Codex home (`$CODEX_HOME`, default
+  `~/.codex`) Argus reads only the session rollouts under `sessions/`
+  and `archived_sessions/`. It never opens `auth.json` (cached
+  credentials), `config.toml`, the SQLite state databases, memories,
+  logs, plugins or skills.
 - **Untrusted JSONL contents.** Session logs are produced by Claude
-  Code, but their contents (model names, project paths, transcript
-  text, tool inputs) are user-controlled. Argus treats them as
-  untrusted input — they're parsed with `pydantic` schemas, escaped
-  before rendering in the dashboard, and never executed.
+  Code and Codex, but their contents (model names, project paths,
+  transcript text, tool inputs) are user-controlled. Argus treats them
+  as untrusted input — they're validated before use, escaped before
+  rendering in the dashboard, and never executed. Codex's encrypted
+  reasoning is never stored, and Codex parse errors never record the
+  offending line's content.
 - **Untrusted browsers visiting localhost.** Other webpages the user
   loads while Argus is running are not trusted. They cannot read
   Argus data (Same-Origin Policy on responses, backed by a loopback
@@ -44,9 +51,9 @@ Argus is built for one user, one machine. It assumes:
   unless you pass `--host 0.0.0.0`, which prints a loud warning. Anyone
   on your LAN can read every prompt you've ever sent if you flip this.
 - **Transcript indexing is opt-in.** The full-text search index over
-  Claude's responses, your replies, and tool output is off until you
-  enable it via Settings or `argus search enable`. Cost/token analytics
-  work without it.
+  agent replies, your prompts and replies, and tool output is off until
+  you enable it via Settings or `argus indexing enable`. Cost/token
+  analytics work without it.
 - **No external network calls.** The only outbound HTTP request in the
   entire codebase is `argus pricing refresh`, a manual command that
   fetches one JSON file from LiteLLM's GitHub. There is no telemetry,
@@ -57,7 +64,8 @@ Argus is built for one user, one machine. It assumes:
 The following are **not** security issues for the purpose of this policy:
 
 - An attacker with shell access to the user's account reads
-  `~/.argus/argus.db`. (They can read `~/.claude/` directly anyway.)
+  `~/.argus/argus.db`. (They can read `~/.claude/` and `~/.codex/`
+  directly anyway.)
 - A user runs `argus start --host 0.0.0.0` and someone on their LAN
   reads the dashboard. The warning message at startup is intentional.
 - Cost figures don't match `ccusage` exactly. After the windowed-
@@ -81,12 +89,14 @@ Things this codebase deliberately does to reduce attack surface:
   through is `<mark>...</mark>` from FTS5 `snippet()`, applied via a
   separate `safeSnippet()` helper that escapes everything else.
 - `watchdog` does not follow symlinks by default. Every read additionally
-  goes through `ClaudeCodeAdapter.ingest_file`, which calls
+  goes through the adapter's `ingest_file`, which calls
   `Path.resolve(strict=True)` and refuses anything that doesn't
-  canonicalise under the `~/.claude/` tree — symlink or NTFS junction.
+  canonicalise under the agent's own tree — `~/.claude/` for
+  `ClaudeCodeAdapter`, and only the Codex home's `sessions/` /
+  `archived_sessions/` for `CodexAdapter` — symlink or NTFS junction.
   The check sits at that single choke point (not at each caller) so
   discovery, the watcher, and the sub-agent walk are all covered by
-  construction; `sub_agent_files_for` filters as well.
+  construction; sub-agent discovery filters as well.
 - Per-tick read cap of 64 MiB on session JSONL and `history.jsonl`,
   so a runaway or hostile multi-GB file can't OOM the process.
 - CSRF Origin check on all non-GET API routes (FastAPI middleware in
@@ -102,7 +112,10 @@ Things this codebase deliberately does to reduce attack surface:
   Installation runs no arbitrary code.
 - `pyproject.toml` `[tool.hatch.build.targets.wheel]` whitelist — only
   `python/argus`, `dashboard-dist`, `pricing`, and `templates` ship. No
-  source tests, no docs, no `src/` legacy.
+  source tests, no docs, no `src/` legacy. The sdist has its own
+  allow-list (`[tool.hatch.build.targets.sdist] only-include`), so local
+  files in the build directory (other worktrees, editor or agent state)
+  can't end up in a published source archive.
 - `argus claude` scaffolding is a pure file copy — no templating,
   substitution, or code execution. It writes only to the path you hand
   `init` (created if absent) or under `~/.argus/templates/`, and never

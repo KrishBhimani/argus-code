@@ -1,13 +1,13 @@
 [project]
 name = "argus-code"
 version = "0.7.0"
-description = "Local-first dashboard for Claude Code cost, token, tool-usage, and full-text search analytics"
+description = "Local-first observability for Claude Code and OpenAI Codex: per-session forensics, cost, tokens, tool health, sub-agents, alerts and full-text search"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [{ name = "Krish Bhimani" }]
 keywords = [
-    "claude", "claude-code", "anthropic", "cli", "dashboard",
+    "claude", "claude-code", "anthropic", "codex", "openai", "cli", "dashboard",
     "analytics", "tokens", "cost", "usage", "llm", "ai-tools",
     "local-first",
 ]

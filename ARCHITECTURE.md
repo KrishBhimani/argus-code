@@ -19,8 +19,8 @@ Argus is two things:
 1. A **watcher** that reads those files as they grow, validates each
    line, and stores it in a local SQLite database at
    `~/.argus/argus.db`. The database is also an **archive** —
-   rows survive even after Claude Code's own cleanup deletes the
-   source `.jsonl`.
+   rows survive even after the source transcript is gone (Claude
+   Code's own cleanup deletes them after 30 days by default).
 2. A **local web server** that queries SQLite and serves a static
    dashboard at `http://localhost:4242`.
 
@@ -39,7 +39,8 @@ SQLite in WAL mode. Two tables you'll touch most often:
 ### `sessions`
 One row per session. **Pre-summed totals** for fast listing:
 
-- `id` (e.g. `claude_code:abc123…`), `agent`, `project_path`
+- `id` (`<agent>:<native id>`, e.g. `claude_code:abc123…` or
+  `codex:01a1…`; sub-agents append `/<child id>`), `agent`, `project_path`
 - `started_at`, `ended_at`, `duration_sec`
 - `total_*_tokens` (fresh_input, output, cache_read, cache_write)
 - `total_cost_usd`, `primary_model`, `turn_count`
@@ -48,8 +49,8 @@ Use for: the Sessions table, "Top sessions in window" lists, anything
 that needs a whole-session view.
 
 ### `turns`
-One row per back-and-forth with Claude — **the source of truth** for
-everything else.
+One row per model response — a Claude Code API message, or a Codex
+`token_usage_record` — **the source of truth** for everything else.
 
 - `id`, `session_id`, `sequence`, `timestamp`
 - `model`, `model_raw`
@@ -79,13 +80,13 @@ heatmap, Trends line chart, "Last N days" totals.
 ## The write path (ingest)
 
 ```
-~/.claude/projects/<proj>/<session-id>.jsonl
-        │
-        │  watchdog Observer emits add/change events
-        ▼
-python/argus/adapters/claude_code/    parse one line at a time
-        │
-        │  pydantic models validate each line
+~/.claude/projects/<proj>/<session-id>.jsonl      $CODEX_HOME/sessions/**/rollout-*.jsonl
+        │                                                  │
+        │  watchdog Observer (one per adapter root) emits add/change events
+        ▼                                                  ▼
+python/argus/adapters/claude_code/         python/argus/adapters/codex/
+        │   parse one line at a time; validate; return turns,
+        │   tool calls and segments (adapters never write the DB)
         ▼
 python/argus/collector/pipeline.py    convert to sessions/turns/tool_calls
         │
@@ -102,7 +103,7 @@ Two ingest paths share the same `ingest_file` function:
    walks every file. Recent files first (foreground), older files in a
    background thread. Dashboard becomes useful within a few seconds.
 2. **Watcher** (`python/argus/collector/watcher.py`) — keeps running
-   after first-run, picks up new lines as Claude Code writes them. A
+   after first-run, picks up new lines as the agents write them. A
    per-path 100ms debouncer coalesces fs-event bursts before handing
    the path to a single ingest worker thread (SQLite WAL = one writer
    at a time).
@@ -270,10 +271,12 @@ A few patterns to absorb before adding code:
   `python/argus/server/app.py`. Defends against random tabs in your
   browser hitting argus while it's running.
 
-- **Path safety.** `discover_session_files` calls `Path.resolve(strict=True)`
-  on each candidate and rejects anything that doesn't canonicalise
-  under `~/.claude/`. Defends against a hostile symlink planted in
-  `projects/` pointing at e.g. `/etc/passwd`. On Windows the
+- **Path safety.** Each adapter's `ingest_file` (and its discovery) calls
+  `Path.resolve(strict=True)` on each candidate and rejects anything that
+  doesn't canonicalise under its own tree — `~/.claude/` for Claude Code,
+  only `sessions/` and `archived_sessions/` of the Codex home for Codex.
+  Defends against a hostile symlink planted in `projects/` pointing at
+  e.g. `/etc/passwd`. On Windows the
   containment check lowercases both sides so case differences in the
   canonical path don't silently reject every candidate.
 
@@ -322,7 +325,8 @@ templates/                  bundled .claude/ scaffolding templates (shipped in w
 tests/                      pytest suite, mirrors python/argus/ layout
 ~/.argus/argus.db           SQLite DB (created on first run)
 ~/.argus/templates/         user-saved scaffolding templates (argus claude template create)
-~/.claude/                  source data we read from
+~/.claude/                  Claude Code source data we read from
+~/.codex/ ($CODEX_HOME)     Codex source data we read from (sessions/, archived_sessions/ only)
 ```
 
 ## What's deliberately NOT here
@@ -344,7 +348,7 @@ tests/                      pytest suite, mirrors python/argus/ layout
 | Add a new dashboard page | `dashboard/src/routes/<name>.tsx` + `dashboard/src/features/<name>/<Name>Page.tsx`, add it to `GROUPS` in `dashboard/src/app/shell/Sidebar.tsx` and `PAGES` in `CommandPalette.tsx` |
 | Add a new API endpoint | `python/argus/server/api.py`, add a `repo.<method_name>()` in `python/argus/store/repository.py` |
 | Add a new SQL table or column | New `MIGRATION_N+1` in `python/argus/store/migrations/inline.py`, bump schema check in `db.py`, add `repo` method, add pydantic model in `python/argus/schema/types.py` |
-| Parse a new JSONL field | `python/argus/adapters/claude_code/schemas.py` (pydantic), wire into `pipeline.py` |
+| Parse a new JSONL field | Claude Code: `python/argus/adapters/claude_code/schemas.py` (pydantic). Codex: `python/argus/adapters/codex/records.py` (pure per-record functions; keep `state.py`'s fold in step). Then wire into `pipeline.py` only if it's a new cross-agent concept. |
 | Tweak cost computation | `python/argus/pricing/compute.py`, then re-ingest to recompute via a backfill |
 | Add a new chart | `dashboard/src/components/charts/` (read its `README.md` first; series colours in `uplotTheme.ts`) |
 | Add a new adapter (OpenClaw, Hermes, …) | New folder `python/argus/adapters/<agent>/` + `@register class` in `adapter.py`. No edits to CLI / watcher / pipeline / server. |
