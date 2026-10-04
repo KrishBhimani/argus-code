@@ -12,13 +12,16 @@ import { usePromptProjects, useSearch, useSearchIndexStatus } from '@/lib/api/ho
 import { api } from '@/lib/api/client';
 import { dayKeys } from '@/lib/analysis/windows';
 import { shortPath } from '@/lib/format/format';
+import { agentOfId, agentShortName } from '@/lib/agents';
 import { cleanSnippet, splitMarks } from './cleanSnippet';
 
 const ROLES = [
   { k: 'prompt', l: 'Your prompts' }, { k: 'user', l: 'Your replies' }, { k: 'assistant', l: 'Assistant' }, { k: 'thinking', l: 'Thinking' }, { k: 'tool_result', l: 'Tool output' },
 ];
 const ROLE_KIND: Record<string, 'good' | 'info' | 'mute'> = { prompt: 'good', user: 'good', assistant: 'info' };
-const roleLabel = (r: string) => (r === 'assistant' ? 'claude' : r === 'prompt' || r === 'user' ? 'you' : r);
+// An assistant reply is labelled with the agent that wrote it (from the session id).
+const roleLabel = (r: string, sessionId: string | null) =>
+  r === 'assistant' ? (sessionId ? agentShortName(agentOfId(sessionId)) : 'assistant') : r === 'prompt' || r === 'user' ? 'you' : r;
 
 function useDebounced<T>(v: T, ms = 250) {
   const [d, setD] = useState(v);
@@ -91,7 +94,7 @@ export default function SearchPage() {
             return (
               <div key={i} className="grid grid-cols-[90px_1fr_160px] gap-3 px-3.5 py-2.5 border-b border-line items-start">
                 <div className="flex flex-col gap-1">
-                  <Pill kind={ROLE_KIND[h.role] ?? 'mute'} icon={false}>{roleLabel(h.role)}</Pill>
+                  <Pill kind={ROLE_KIND[h.role] ?? 'mute'} icon={false}>{roleLabel(h.role, h.session_id)}</Pill>
                   <span className="font-mono text-[10px] text-ink-2">{new Date(h.timestamp_ms).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
                 </div>
                 <div className="text-xs leading-relaxed break-words">

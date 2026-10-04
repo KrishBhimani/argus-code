@@ -5,6 +5,11 @@ const LABEL: Record<string, string> = { claude_code: 'Claude Code', codex: 'Code
 /** Human name for an adapter id ("claude_code" -> "Claude Code"). */
 export const agentLabel = (agent: string): string => LABEL[agent] ?? agent;
 
+const SHORT: Record<string, string> = { claude_code: 'claude', codex: 'codex' };
+
+/** Compact lowercase name for pills ("claude_code" -> "claude"). */
+export const agentShortName = (agent: string): string => SHORT[agent] ?? agent;
+
 /** Session ids are "<agent>:<native id>". */
 export const agentOfId = (id: string): string => (id.includes(':') ? id.slice(0, id.indexOf(':')) : 'claude_code');
 
