@@ -46,7 +46,7 @@ const shots = [
   { name: 'models', path: '/models' },
   { name: 'trends', path: '/trends' },
   { name: 'tools', path: '/tools' },
-  { name: 'alerts', path: '/alerts' },
+  { name: 'alerts', path: '/alerts', after: showAllAlerts },
   { name: 'search', path: '/search', after: typeQuery },
   { name: 'settings', path: '/settings', after: redactPaths },
 ];
@@ -81,6 +81,15 @@ async function typeQuery(page) {
   const box = page.locator('input[type="search"], input[placeholder*="earch"]').first();
   await box.fill(query);
   await page.waitForTimeout(1200); // 250 ms debounce + fetch + render
+}
+
+// The default "Unseen" filter is empty once alerts are read; show every alert instead.
+async function showAllAlerts(page) {
+  const all = page.getByText(/^All\s*·/).first();
+  if (await all.count()) {
+    await all.click();
+    await page.waitForTimeout(400);
+  }
 }
 
 // Replace local file paths in the Parse errors list with a generic form so the
@@ -118,12 +127,38 @@ function aliasFor(name) {
 }
 // A path segment may contain a space ("gen ai/argus-cli"), so a space is consumed only
 // when the chunk after it still contains a slash; prose after a path is left alone.
-const PATH_RE = String.raw`(?:[A-Za-z]:[\\/](?:Users[\\/][^\\/\s]+[\\/])?documents[\\/]|…[\\/])(?:[^\s"'\`)]+|[ ]+(?=[^\s"'\`)]*[\\/]))*`;
+// Matched case-insensitively: Argus stores Windows project paths lowercased
+// (c:/users/...), and anything under a user profile counts (OneDrive\Documents, Desktop...).
+// `users\you` is the already-generic placeholder redactPaths writes, so it is left alone.
+const PATH_RE = String.raw`(?:[A-Za-z]:[\\/](?:users[\\/](?!you[\\/])[^\\/\s]+[\\/]|documents[\\/])|…[\\/])(?:[^\s"'\`)]+|[ ]+(?=[^\s"'\`)]*[\\/]))*`;
+
+// Every project name Argus knows about, fetched once before capturing, so a bare name
+// (an alert title, a `project=` tag, prose) is aliased even on a page that shows no path.
+// Generic folder names (e.g. a project in .../dist/codex) would mangle ordinary UI words
+// like "Codex", so they are only redacted as part of a path, never as bare words.
+const GENERIC_NAMES = new Set(['codex', 'claude', 'dist', 'src', 'app', 'apps', 'build', 'code', 'docs',
+  'documents', 'projects', 'desktop', 'downloads', 'playground', 'tmp', 'temp', 'test', 'tests', 'web']);
+let knownProjects = [];
+async function loadKnownProjects() {
+  try {
+    const res = await fetch(`${url}/api/sessions?limit=100000`);
+    const { sessions } = await res.json();
+    const names = new Set();
+    for (const s of sessions) {
+      const name = (s.project_path ?? '').replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop();
+      if (name) names.add(name);
+    }
+    knownProjects = [...names].sort();
+    for (const n of knownProjects) aliasFor(n); // stable aliases: alphabetical
+  } catch (e) {
+    console.warn('could not load project list for redaction:', e.message);
+  }
+}
 
 async function redactProjects(page) {
   // Pass 1: discover the last segment of every matching path so aliases are assigned in Node.
   const names = await page.evaluate((re) => {
-    const rx = new RegExp(re, 'g');
+    const rx = new RegExp(re, 'gi');
     const found = new Set();
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     while (walker.nextNode()) {
@@ -134,10 +169,13 @@ async function redactProjects(page) {
     }
     return [...found];
   }, PATH_RE);
-  const mapping = Object.fromEntries(names.map((n) => [n, aliasFor(n)]));
+  const mapping = Object.fromEntries(
+    [...new Set([...names, ...knownProjects])].map((n) => [n, aliasFor(n)]),
+  );
+  const bareSkip = [...GENERIC_NAMES];
   // Pass 2: rewrite paths, then user-profile paths, then bare project names.
-  await page.evaluate(({ re, mapping }) => {
-    const rx = new RegExp(re, 'g');
+  await page.evaluate(({ re, mapping, bareSkip }) => {
+    const rx = new RegExp(re, 'gi');
     const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     const nodes = [];
@@ -148,19 +186,22 @@ async function redactProjects(page) {
         const parts = m.split(/[\\/]/).filter(Boolean);
         return `~/projects/${mapping[parts[parts.length - 1]] ?? 'project'}`;
       });
-      t = t.replace(/[A-Za-z]:\\Users\\[^\\\s]+/g, 'C:\\Users\\you');
+      t = t.replace(/[A-Za-z]:[\\/]users[\\/][^\\/\s]+/gi, 'C:\\Users\\you');
       // Longest names first, and hyphens/dots/underscores count as part of a name, so
       // "argus" never matches inside "argus-code".
-      const entries = Object.entries(mapping).filter(([name, alias]) => name !== alias).sort((a, b) => b[0].length - a[0].length);
+      const entries = Object.entries(mapping)
+        .filter(([name, alias]) => name !== alias && name.length >= 3 && !bareSkip.includes(name.toLowerCase()))
+        .sort((a, b) => b[0].length - a[0].length);
       for (const [name, alias] of entries) {
         t = t.replace(new RegExp(`(^|[^A-Za-z0-9._-])${esc(name)}(?![A-Za-z0-9._-])`, 'g'), `$1${alias}`);
       }
       if (t !== node.nodeValue) node.nodeValue = t;
     }
-  }, { re: PATH_RE, mapping });
+  }, { re: PATH_RE, mapping, bareSkip });
   await page.waitForTimeout(150);
 }
 
+await loadKnownProjects();
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 2 });
 for (const s of shots) {
@@ -169,6 +210,17 @@ for (const s of shots) {
   await page.waitForTimeout(700); // let charts settle
   if (s.after) await s.after(page);
   await redactProjects(page);
+  // Tripwire: a user-profile path that survived redaction would publish a username.
+  const leaked = await page.evaluate((names) => {
+    const text = document.body.innerText;
+    const hits = (text.match(/[A-Za-z]:[\\/]users[\\/](?!you\b)[^\\/\s]+/gi) ?? []).slice(0, 3);
+    for (const n of names) {
+      const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (new RegExp(`(^|[^A-Za-z0-9._-])${esc}(?![A-Za-z0-9._-])`).test(text)) hits.push(n);
+    }
+    return hits;
+  }, knownProjects.filter((n) => !KEEP_PROJECT_NAMES.has(n) && n.length >= 3 && !GENERIC_NAMES.has(n.toLowerCase())));
+  if (leaked.length) console.warn(`WARNING ${s.name}: unredacted path(s):`, leaked);
   const file = path.join(out, `${s.name}.png`);
   await page.screenshot({ path: file, fullPage: false });
   console.log('captured', s.name, '->', file);
