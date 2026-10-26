@@ -8,7 +8,7 @@ from argus.pricing.load import _latest_table_file, load_pricing_table
 
 def test_loads_bundled_pricing_json():
     t = load_pricing_table()
-    assert t.version == "2026-10-04"
+    assert t.version == "2026-10-26"
     assert t.models["claude-opus-4-7"].input == 5
     assert t.models["gpt-5.3-codex"].output == 14
 
@@ -128,3 +128,36 @@ def test_new_table_keeps_every_previous_price():
     new = load_pricing_table().models
     for model, prices in old.items():
         assert new[model].model_dump(exclude_none=True) == {k: v for k, v in prices.items()}, model
+
+
+def test_bundled_table_prices_models_released_after_2026_10_04():
+    """Models on the official pricing pages (checked 2026-10-26) that the
+    2026-10-04 table lacked, so a user who never ran `argus pricing refresh`
+    saw $0 for them. Sonnet 5.5 caches at 0.05x input (Anthropic footnote);
+    Haiku 5.5 is its <=100k-token tier. OpenAI rows follow this table's
+    convention: the 30m cache-write price in both write columns."""
+    m = load_pricing_table().models
+    expect = {  # model: (input, output, cache_write_5m, cache_write_1h, cache_read)
+        "claude-sonnet-5-5": (2, 10, 2.5, 4, 0.10),
+        "claude-haiku-5-5": (0.10, 0.50, 0.125, 0.20, 0.01),
+        "claude-mythos-5-1": (10, 50, 12.5, 20, 0.25),
+        "gpt-5.6-cyber": (12.5, 75, 15.625, 15.625, 1.25),
+        "gpt-5.5-cyber": (12.5, 75, None, None, 1.25),
+        "gpt-rosalind-discovery": (5, 25, None, None, 0.50),
+    }
+    for model, (i, o, w5, w1, r) in expect.items():
+        p = m[model]
+        assert (p.input, p.output, p.cache_write_5m, p.cache_write_1h, p.cache_read) == (
+            i, o, w5, w1, r
+        ), model
+
+
+def test_2026_10_26_table_keeps_every_2026_10_04_price():
+    """The 2026-10-26 bump only adds models: no existing price moved, so
+    stored costs stay identical after an upgrade."""
+    from argus.pricing.load import _bundled_dir
+
+    old = json.loads((_bundled_dir() / "2026-10-04.json").read_text(encoding="utf-8"))["models"]
+    new = load_pricing_table().models
+    for model, prices in old.items():
+        assert new[model].model_dump(exclude_none=True) == prices, model
