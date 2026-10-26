@@ -5,7 +5,7 @@ Parent: repo-root `AGENTS.md`. The statically-built UI served by `server/`.
 ## Purpose
 
 Vite + React 19 + TypeScript single-page app: TanStack Router (file routes in
-`src/routes/`), TanStack Query (API cache, 4 s polling for status/alerts),
+`src/routes/`), TanStack Query (API cache; ingest status polls at 4-10 s, both alert lists at 10 s),
 TanStack Table + Virtual (Sessions grid), uPlot for time series/scatter and
 hand-rolled SVG for bars/meters/heatmaps/minimap, Tailwind v4 with the design
 tokens in `src/styles.css` (`@theme`). Pages live in `src/features/<page>/`,
@@ -59,6 +59,10 @@ analyses in `src/lib/analysis/`.
   maps use the same keys. "vs prior window" deltas come from the server's
   `prior_window` — don't re-derive them from per-day maps. Tests that depend on
   the timezone pin `TZ` (see `src/lib/api/timezone.test.ts`, IST near midnight).
+- **Don't join two independently cached queries for one view.** If a value can
+  be derived from a response the page already renders (e.g. unseen alerts =
+  `seen_at == null` on `/api/alerts`), derive it; queries on different refresh
+  schedules drift apart and show stale or missing rows (issue #58).
 - **Derived analyses are pure and unit-tested** (`src/lib/analysis/`, plus
   `features/tools/toolsOverTime.ts`). Each function that would scale better as a
   server aggregate carries a `// candidate-endpoint:` comment — that list seeds

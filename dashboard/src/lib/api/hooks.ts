@@ -12,9 +12,13 @@ export const useSubagents = (id: string) =>
 export const useToolsOverview = (w: Window) => useQuery({ queryKey: ['tools', w], queryFn: () => api.toolsOverview(w) });
 export const useTrends = (g: 'day' | 'week' | 'month', by: 'model' | 'agent') =>
   useQuery({ queryKey: ['trends', g, by, tzOffsetMin()], queryFn: () => api.trends(g, by) });
-export const useAlerts = () => useQuery({ queryKey: ['alerts'], queryFn: () => api.alerts(200), select: (d) => d.alerts });
+// Both alert queries poll together: detectors re-open and escalate alerts in
+// place (same id), so a list that never refetches drifts from the badge.
+const ALERTS_POLL_MS = 10_000;
+export const useAlerts = () =>
+  useQuery({ queryKey: ['alerts'], queryFn: () => api.alerts(200), select: (d) => d.alerts, refetchInterval: ALERTS_POLL_MS });
 export const useUnseenAlerts = () =>
-  useQuery({ queryKey: ['alerts', 'unseen'], queryFn: () => api.unseenAlerts(), select: (d) => d.alerts, refetchInterval: 10_000 });
+  useQuery({ queryKey: ['alerts', 'unseen'], queryFn: () => api.unseenAlerts(), select: (d) => d.alerts, refetchInterval: ALERTS_POLL_MS });
 export const useMarkAlertSeen = () => {
   const qc = useQueryClient();
   return useMutation({ mutationFn: api.markAlertSeen, onSuccess: () => qc.invalidateQueries({ queryKey: ['alerts'] }) });
