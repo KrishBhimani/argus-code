@@ -389,3 +389,15 @@ def test_squash_landed_commits_ship_their_thread(tmp_path):
     by = {s["title"]: s for s in queries.overview(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z",
                                                    now_iso="2026-09-22T00:00:00Z")["stories"]}
     assert (by["Build A"]["state"], by["Build A"]["reason"]) == ("shipped", "1 commit on main")
+
+
+def test_mine_scope_leaves_out_a_teammates_agent_commits(tmp_path):
+    """Regression: "mine" counted every agent-co-authored commit, whoever wrote it, so a team
+    repo showed hundreds of commits as the user's own."""
+    conn = _world(tmp_path)
+    conn.execute("INSERT INTO commits VALUES (1, 'aaa9999', 'Mate', 'mate@x', '2026-09-12T10:00:00Z', '2026-09-12T10:00:00Z', 'feat: theirs', 1, 1, 9, 0, 1)")
+    frm, to = "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z"
+    assert queries.overview(conn, 1, frm, to)["tiles"]["commits"] == 1
+    assert queries.overview(conn, 1, frm, to, scope="all")["tiles"]["commits"] == 3
+    (p,) = queries.projects(conn, now_iso="2026-09-25T00:00:00Z")
+    assert p["commits"] == 1

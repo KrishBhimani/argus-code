@@ -32,7 +32,7 @@ def test_evidence_levels_and_scope(tmp_path):
     conn.executemany("INSERT INTO session_repo VALUES (?, 1, '/r', 'main')", [("claude_code:A",), ("claude_code:B",)])
     _commit(conn, "aaaaaaa111", "2026-09-01T18:00:00Z")                    # outside window, but claimed
     conn.execute("INSERT INTO commit_claims VALUES ('claude_code:A', 'aaaaaaa', NULL)")
-    _commit(conn, "bbbbbbb222", "2026-09-01T10:10:00Z", email="bot@x", agent=1)  # co-authored, A's window
+    _commit(conn, "bbbbbbb222", "2026-09-01T10:10:00Z", agent=1)           # mine and co-authored, A's window
     _commit(conn, "ccccccc333", "2026-09-01T12:20:00Z")                    # mine, B's window
     _commit(conn, "ddddddd444", "2026-09-01T12:21:00Z", email="mate@x")    # teammate: never inferred
 
@@ -76,3 +76,15 @@ def test_relink_is_idempotent(tmp_path):
     link_repo(conn, 1)
     link_repo(conn, 1)
     assert conn.execute("SELECT COUNT(*) FROM session_commits").fetchone()[0] == 1
+
+
+def test_teammates_agent_commit_is_not_mine(tmp_path):
+    """Regression: a teammate's commit with an agent co-author trailer, made while one of my
+    sessions was active, was linked to my session (69 such commits in one real repo)."""
+    _core(tmp_path, {"claude_code:A": ["2026-09-01T10:00:00Z"]})
+    conn = open_work_db(tmp_path)
+    conn.execute("INSERT INTO repos (id, root, display_name, user_emails) VALUES (1, '/r', 'r', '[\"me@example.com\"]')")
+    conn.execute("INSERT INTO session_repo VALUES ('claude_code:A', 1, '/r', 'main')")
+    _commit(conn, "hhhhhhh888", "2026-09-01T10:05:00Z", email="mate@x", agent=1)
+    assert link_repo(conn, 1) == {"exact": 0, "coauthored": 0, "inferred": 0}
+    assert _links(conn) == {}

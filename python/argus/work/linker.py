@@ -59,16 +59,15 @@ def link_repo(conn: sqlite3.Connection, repo_id: int) -> dict[str, int]:
                                   (repo_id, claim["short_sha"] + "%")):
                 offer(c["sha"], sid, "exact", 0.0)
     for c in commits:
+        # Who wrote a commit and whether an agent helped are separate facts: timing can only
+        # tie a commit to my session when I am its author. A teammate's agent commit is theirs.
+        if c["author_email"].lower() not in mine:
+            continue
         t = _ms(c["authored_at"])
-        is_mine = c["author_email"].lower() in mine
         for sid in sessions:
             gap = _gap_after_turn(times[sid], t)
-            if gap is None:
-                continue
-            if c["agent_coauthored"]:
-                offer(c["sha"], sid, "coauthored", gap)
-            elif is_mine:
-                offer(c["sha"], sid, "inferred", gap)
+            if gap is not None:
+                offer(c["sha"], sid, "coauthored" if c["agent_coauthored"] else "inferred", gap)
     conn.execute("BEGIN")
     try:
         conn.execute("DELETE FROM session_commits WHERE repo_id = ?", (repo_id,))

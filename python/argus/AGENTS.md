@@ -48,7 +48,11 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   A **project is a repo, not a folder**: `repos` has one row per folder, and folders
   sharing `project_key` (normalized `origin` URL → else first commit → else the path;
   credentials stripped) are one project. Queries resolve any folder id to the whole
-  group and count each commit sha once, keeping the strongest link. Columns added
+  group and count each commit sha once, keeping the strongest link. **Whose commit:**
+  timing links (`coauthored`, `inferred`) are offered only for commits the user authored
+  (`repos.user_emails` + the global git email); an agent co-author trailer says how a
+  commit was written, never whose it is. "Mine" scope = authored by the user, or `exact`
+  (a session's transcript shows it making that sha). Columns added
   after the first trial build are added in `open_work_db` only when missing.
   Time comes from one source per session, best first: `measured` (transcript
   `turn_duration`), `estimated` (transcript gaps), `archive` (argus.db turn gaps, for

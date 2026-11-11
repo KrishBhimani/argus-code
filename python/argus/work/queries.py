@@ -139,7 +139,9 @@ def _commits(conn, rids: list[int], frm: str, to: str, scope: str) -> list[dict]
     if scope == "all":
         return rows
     mine = set().union(*(mine_emails(conn, rid) for rid in rids))
-    return [r for r in rows if r["author_email"] in mine or r["agent_coauthored"] or r["evidence"] == "exact"]
+    # Mine = I am the author, or one of my sessions made it (its sha is in the transcript).
+    # An agent co-author says how a commit was written, never whose it is.
+    return [r for r in rows if r["author_email"].lower() in mine or r["evidence"] == "exact"]
 
 
 def _tiles(conn, rids, ids, frm, to, scope) -> dict:
