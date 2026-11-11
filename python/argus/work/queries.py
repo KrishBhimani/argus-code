@@ -6,6 +6,7 @@ import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
+from ..store.repository import normalize_project_path
 from .db import get_meta
 from .linker import mine_emails
 from .stories import SessionSummary, group_stories
@@ -215,7 +216,7 @@ def projects(conn: sqlite3.Connection, now_iso: str, tz: int = 0, days: int = 30
                       "session_id": ended["id"]}
         mine_commits = _commits(conn, rids, "0000", to, "mine")
         last_commit = mine_commits[-1]["authored_at"] if mine_commits else None
-        outcomes = {"shipped": 0, "open": 0, "dropped": 0}
+        outcomes = {"shipped": 0, "open": 0, "dropped": 0, "explored": 0}
         if has_core:
             for s in _period_stories(conn, rids, frm, to):
                 b = _bucket(s["state"])
@@ -268,6 +269,23 @@ def _model(conn, sid: str) -> str | None:
     return row["primary_model"] if row else None
 
 
+def _project_files(conn, rids: list[int], sids: list[str]) -> dict[str, frozenset[str]]:
+    """Per session with a file-edit record: the files it edited inside this project, as paths
+    within the repo (so a worktree and the main checkout name a file the same way).
+    A session missing from the result has no record at all."""
+    if not sids:
+        return {}
+    roots = sorted((normalize_project_path(r["root"]) + "/" for r in conn.execute(
+        f"SELECT root FROM repos WHERE id IN ({_in(rids)})", rids)), key=len, reverse=True)   # a nested folder first
+    out: dict[str, set[str]] = {r["session_id"]: set() for r in conn.execute(
+        f"SELECT session_id FROM edits_seen WHERE session_id IN ({_in(sids)})", sids)}
+    for f in conn.execute(f"SELECT session_id, path FROM session_files WHERE session_id IN ({_in(sids)})", sids):
+        root = next((r for r in roots if f["path"].startswith(r)), None)
+        if root:
+            out.setdefault(f["session_id"], set()).add(f["path"][len(root):])
+    return {sid: frozenset(v) for sid, v in out.items()}
+
+
 def _summaries(conn, rids, ids, frm, to, scope) -> list[SessionSummary]:
     slug = _repo_slug(conn, rids)
     turns = _turn_rows(conn, ids, frm, to)
@@ -296,6 +314,7 @@ def _summaries(conn, rids, ids, frm, to, scope) -> list[SessionSummary]:
                 WHERE ta.skill IS NOT NULL AND {_ROOT} IN ({_in(list(by_sid))}) AND t.timestamp >= ? AND t.timestamp < ?
                 GROUP BY sid, ta.skill""", [*by_sid, frm, to]):
             skills_by_sid.setdefault(r["sid"], []).append(r["skill"])
+    files = _project_files(conn, rids, list(by_sid))
     out = []
     for sid, ts in by_sid.items():
         facts =conn.execute("SELECT title FROM session_facts WHERE session_id = ?", (sid,)).fetchone()
@@ -310,7 +329,7 @@ def _summaries(conn, rids, ids, frm, to, scope) -> list[SessionSummary]:
                                   active.get(sid, 0), sum(t["cost_usd"] for t in ts), len(ts), skills, prs,
                                   commits_by_sid.get(sid, []), sid in estimated,
                                   sum(t["output_tokens"] or 0 for t in ts), _whole(conn, sid, frm, to),
-                                  _model(conn, sid), repo_id=where["repo_id"]))
+                                  _model(conn, sid), repo_id=where["repo_id"], files=files.get(sid)))
     return out
 
 
@@ -362,9 +381,19 @@ def _stateful(conn, stories: list[dict], now_iso: str, rids: list[int]) -> list[
     return stories
 
 
-def _project_stories(conn, rids: list[int], frm: str, to: str, now_iso: str) -> list[dict]:
+def _default_branches(conn, rids: list[int]) -> set[str]:
+    """The project's default branch names (`refs/remotes/origin/main` -> `main`), per folder."""
+    return {r["default_ref"].rsplit("/", 1)[-1] for r in conn.execute(
+        f"SELECT default_ref FROM repos WHERE id IN ({_in(rids)}) AND default_ref IS NOT NULL", rids)}
+
+
+def _group(conn, rids: list[int], summaries: list[SessionSummary]) -> list[dict]:
     gap = float(get_meta(conn, "story_gap_days") or 2)
-    return _stateful(conn, group_stories(_summaries(conn, rids, _sessions(conn, rids), frm, to, "mine"), gap), now_iso, rids)
+    return group_stories(summaries, gap, _default_branches(conn, rids))
+
+
+def _project_stories(conn, rids: list[int], frm: str, to: str, now_iso: str) -> list[dict]:
+    return _stateful(conn, _group(conn, rids, _summaries(conn, rids, _sessions(conn, rids), frm, to, "mine")), now_iso, rids)
 
 
 def _period_stories(conn, rids: list[int], frm: str, now_iso: str) -> list[dict]:
@@ -376,13 +405,13 @@ def _period_stories(conn, rids: list[int], frm: str, now_iso: str) -> list[dict]
 
 
 def _bucket(state: str) -> str | None:
-    return "shipped" if state == "shipped" else "dropped" if state == "dropped" else "open" if state in OPEN_STATES else None
+    return state if state in ("shipped", "dropped", "explored") else "open" if state in OPEN_STATES else None
 
 
 def threads(conn: sqlite3.Connection, now_iso: str, tz: int = 0, days: int = 30) -> dict:
     """Every open thread across projects (last OPEN_LOOKBACK_DAYS days, newest first) and the
     period's shipped / open / dropped counts."""
-    empty = {"open": [], "counts": {"shipped": 0, "open": 0, "dropped": 0}, "remote_as_of": None}
+    empty = {"open": [], "counts": {"shipped": 0, "open": 0, "dropped": 0, "explored": 0}, "remote_as_of": None}
     if not _has_core(conn):
         return empty
     lookback = _iso(_dt(now_iso) - timedelta(days=OPEN_LOOKBACK_DAYS))
@@ -432,7 +461,6 @@ def overview(conn: sqlite3.Connection, repo_id: int, frm: str, to: str, scope: s
         if d in commits_d:
             commits_d[d] += 1
     summaries = _summaries(conn, rids, ids, frm, to, scope)
-    gap = float(get_meta(conn, "story_gap_days") or 2)
     branch_cost: dict[str, float] = {}
     for s in summaries:
         branch_cost[s.branch or "(no branch)"] = branch_cost.get(s.branch or "(no branch)", 0) + s.cost
@@ -457,7 +485,7 @@ def overview(conn: sqlite3.Connection, repo_id: int, frm: str, to: str, scope: s
         "tiles": tiles, "prior": prior,
         "daily": {"days": days, "active_ms": list(active_d.values()), "commits": list(commits_d.values()),
                   "output_tokens": list(tokens_d.values()), "cost": list(cost_d.values())},
-        "stories": _stateful(conn, group_stories(summaries, gap), now_iso or to, rids),
+        "stories": _stateful(conn, _group(conn, rids, summaries), now_iso or to, rids),
         "breakdowns": {
             "branches": top(branch_cost, 6),
             "skills": [{"name": k, "value": v / total_cost} for k, v in sorted(skill_cost.items(), key=lambda kv: -kv[1])[:6]],

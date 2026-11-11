@@ -70,7 +70,17 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   *`files` evidence* (`linker.py`, above the two timing levels): a commit the user
   authored that changes a file the session edited before it, at most `FILES_WINDOW_MS`
   (7 days) earlier, with no other commit having changed that file in between; more
-  shared files wins, then the nearer edit. Columns added
+  shared files wins, then the nearer edit.
+  *Thread grouping* (`stories.group_stories`): a session joins the thread, active within
+  the gap, with which it shares project files (at least `SHARE` = 25% of the smaller
+  side; paths are repo-relative, so worktrees agree), the most shared winning. A branch
+  only holds sessions together when it is not long-lived (`LONG_LIVED` names plus the
+  project's default branches): unrelated work passes through `main`. A session without
+  a record (`files is None`, not in `edits_seen`) falls back to "same branch".
+  *Explored* (`threads.py`): a thread with no commits whose sessions all have a record
+  and edited no project file is `explored` (a question or review), never `dropped` or
+  `uncommitted`; with edits and no commit the reason says how many files. Outcome
+  counts carry `explored` beside `shipped`/`open`/`dropped`. Columns added
   after the first trial build are added in `open_work_db` only when missing.
   Time comes from one source per session, best first: `measured` (transcript
   `turn_duration`), `estimated` (transcript gaps), `archive` (argus.db turn gaps, for

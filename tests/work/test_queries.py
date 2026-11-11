@@ -289,7 +289,7 @@ def test_threads_lists_open_work_across_projects(tmp_path):
     # B (Sep 20, no commit) is the newest story in folder 1, and the folder is dirty
     assert [(x["title"], x["state"], x["reason"]) for x in t["open"]] == [("Fix B", "uncommitted", "folder has 3 changed files")]
     assert (t["open"][0]["project_name"], t["open"][0]["project_id"], t["open"][0]["key"]) == ("proj", 1, "claude_code:B")
-    assert t["counts"] == {"shipped": 1, "open": 1, "dropped": 0}
+    assert t["counts"] == {"shipped": 1, "open": 1, "dropped": 0, "explored": 0}
 
 
 def test_only_the_newest_story_claims_a_dirty_folder(tmp_path):
@@ -298,21 +298,21 @@ def test_only_the_newest_story_claims_a_dirty_folder(tmp_path):
     conn.execute("DELETE FROM session_commits")   # A now has no commit either
     t = queries.threads(conn, now_iso="2026-09-22T00:00:00Z", days=30)
     assert [x["title"] for x in t["open"]] == ["Fix B"]
-    assert t["counts"] == {"shipped": 0, "open": 1, "dropped": 1}
+    assert t["counts"] == {"shipped": 0, "open": 1, "dropped": 1, "explored": 0}
 
 
 def test_projects_carry_outcomes(tmp_path):
     conn = _world(tmp_path)
     _git_facts(conn)
     (p,) = queries.projects(conn, now_iso="2026-09-25T00:00:00Z")
-    assert p["outcomes"] == {"shipped": 1, "open": 0, "dropped": 1}
+    assert p["outcomes"] == {"shipped": 1, "open": 0, "dropped": 1, "explored": 0}
     assert p["cost_per_shipped"] == 4.0          # all spend ($4) ÷ 1 shipped, dropped work included
 
 
 def test_threads_without_the_archive_are_empty(tmp_path):
     conn = open_work_db(tmp_path)                # no argus.db: nothing attached as core
     assert queries.threads(conn, now_iso="2026-09-22T00:00:00Z") == {
-        "open": [], "counts": {"shipped": 0, "open": 0, "dropped": 0}, "remote_as_of": None}
+        "open": [], "counts": {"shipped": 0, "open": 0, "dropped": 0, "explored": 0}, "remote_as_of": None}
 
 
 def _squash(conn, repo_id: int, sha: str, subject: str) -> None:
@@ -400,3 +400,23 @@ def test_mine_scope_leaves_out_a_teammates_agent_commits(tmp_path):
     assert queries.overview(conn, 1, frm, to, scope="all")["tiles"]["commits"] == 3
     (p,) = queries.projects(conn, now_iso="2026-09-25T00:00:00Z")
     assert p["commits"] == 1 and "claude_share" not in p
+
+
+def test_a_thread_that_edited_no_project_file_is_explored_not_dropped(tmp_path):
+    """Seen on real data: 11 "dropped" threads were questions and reviews. A file edited
+    outside the project (a scratch note) does not make it work on the project."""
+    conn = _world(tmp_path)
+    _git_facts(conn)
+    conn.execute("INSERT INTO edits_seen VALUES ('claude_code:B')")
+    conn.execute("INSERT INTO session_files VALUES ('claude_code:B', '/tmp/scratch/notes.md', 1, '2026-09-20T22:30:00Z', '2026-09-20T22:30:00Z')")
+    o = queries.overview(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z", now_iso="2026-09-25T00:00:00Z")
+    by = {s["title"]: s for s in o["stories"]}
+    assert (by["Fix B"]["state"], by["Fix B"]["files_edited"]) == ("explored", 0)
+    (p,) = queries.projects(conn, now_iso="2026-09-25T00:00:00Z")
+    assert p["outcomes"] == {"shipped": 1, "open": 0, "dropped": 0, "explored": 1}
+    assert queries.threads(conn, "2026-09-25T00:00:00Z")["counts"]["explored"] == 1
+    # the same session, having edited a file of the project, is abandoned work again
+    conn.execute("INSERT INTO session_files VALUES ('claude_code:B', '/r/src/b.py', 2, '2026-09-20T22:30:00Z', '2026-09-20T22:30:00Z')")
+    o = queries.overview(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z", now_iso="2026-09-25T00:00:00Z")
+    b = next(s for s in o["stories"] if s["title"] == "Fix B")
+    assert (b["state"], b["reason"]) == ("dropped", "1 file edited, none committed · $2.00 spent")

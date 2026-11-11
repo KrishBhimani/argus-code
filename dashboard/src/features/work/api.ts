@@ -5,8 +5,8 @@ import { tzOffsetMin } from '@/lib/api/client';
 const VALIDATE = import.meta.env.DEV || import.meta.env.MODE === 'test';
 
 const Evidence = z.enum(['exact', 'files', 'coauthored', 'inferred']);
-const ThreadState = z.enum(['uncommitted', 'not_pushed', 'pr_open', 'stalled', 'in_progress', 'shipped', 'dropped', 'unknown']);
-const Outcomes = z.object({ shipped: z.number(), open: z.number(), dropped: z.number() });
+const ThreadState = z.enum(['uncommitted', 'not_pushed', 'pr_open', 'stalled', 'in_progress', 'shipped', 'dropped', 'explored', 'unknown']);
+const Outcomes = z.object({ shipped: z.number(), open: z.number(), dropped: z.number(), explored: z.number() });
 
 export const WorkStatus = z.object({ enabled: z.boolean(), last_scan_at: z.string().nullable(), repos: z.number(), errors: z.record(z.string()) });
 const Project = z.object({

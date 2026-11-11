@@ -19,6 +19,7 @@ const base = {
     story({ key: 'claude_code:ship1', title: 'grokbot integration' }),
     story({ key: 'claude_code:ship2', title: 'composio async fix' }),
     story({ key: 'claude_code:drop', title: 'fastapi import error', state: 'dropped', reason: 'no commit · $0.44 spent', cost: 0.44 }),
+    story({ key: 'claude_code:ask', title: 'how does the watcher work', state: 'explored', reason: 'no files edited · $0.30 spent', cost: 0.3 }),
   ],
   breakdowns: { branches: [], skills: [], files: [] },
 };
@@ -45,7 +46,7 @@ it('sorts threads into Open, Shipped and Dropped, each with its reason', () => {
 it('keeps Dropped folded to one line until asked', () => {
   render(<ThreadsTab repo={1} />);
   expect(screen.queryByText('fastapi import error')).not.toBeInTheDocument();
-  fireEvent.click(column('Dropped').getByRole('button', { name: /1 dropped/ }));
+  fireEvent.click(column('Not shipped').getByRole('button', { name: /1 dropped/ }));
   expect(screen.getByText('fastapi import error')).toBeInTheDocument();
 });
 
@@ -78,4 +79,15 @@ it('brushing narrows the threads without changing their states', () => {
   expect(column('Shipped').getByText('grokbot integration')).toBeInTheDocument();
   expect(column('Shipped').getAllByText('SHIPPED')).toHaveLength(2);
   expect(screen.queryByText('Project sharing redesign')).not.toBeInTheDocument();   // last active Sep 28
+});
+
+it('keeps questions and reviews apart from dropped work', () => {
+  render(<ThreadsTab repo={1} />);
+  const col = column('Not shipped');
+  expect(col.queryByText('how does the watcher work')).toBeNull();
+  fireEvent.click(col.getByRole('button', { name: /1 explored/ }));
+  expect(col.getByText('how does the watcher work')).toBeInTheDocument();
+  expect(col.getByText(/no files edited · \$0\.30 spent/)).toBeInTheDocument();
+  expect(col.queryByText('fastapi import error')).toBeNull();          // dropped stays folded on its own
+  expect(within(screen.getByRole('group', { name: 'Outcomes' })).getByText('Explored')).toBeInTheDocument();
 });

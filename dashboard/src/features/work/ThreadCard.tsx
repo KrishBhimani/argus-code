@@ -1,10 +1,10 @@
 import { Link } from '@tanstack/react-router';
 import { ago, tok, usd } from '@/lib/format/format';
 import type { ThreadStateT, WorkThread } from './api';
-import { STATE } from './fmt';
+import { stateBadge } from './fmt';
 
 export function StateBadge({ state }: { state: ThreadStateT }) {
-  const s = STATE[state];
+  const s = stateBadge(state);
   return <span className={`shrink-0 text-[10px] tracking-[0.08em] px-1.5 py-px rounded-sm border ${s.className}`}>{s.label}</span>;
 }
 

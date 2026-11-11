@@ -8,7 +8,7 @@ import { ago, num, tok, usd } from '@/lib/format/format';
 import { tzOffsetMin } from '@/lib/api/client';
 import { useWorkOverview, type Scope, type StoryT } from './api';
 import { DayColumns, type Sel } from './DayColumns';
-import { EVIDENCE, EVIDENCE_KEY, OPEN_STATES, hours } from './fmt';
+import { EVIDENCE_KEY, OPEN_STATES, evidenceBadge, hours } from './fmt';
 import { StateBadge } from './ThreadCard';
 import { selRange } from './range';
 import { periodLabel } from './PeriodChips';
@@ -44,7 +44,7 @@ function Details({ s }: { s: StoryT }) {
             <div key={c.sha} className="grid grid-cols-[64px_minmax(0,1fr)_auto] gap-x-3 items-center">
               <span className="font-mono text-ink-2">{c.sha.slice(0, 7)}</span>
               <span className="truncate">{c.subject}</span>
-              <span className={`text-[10px] px-1.5 rounded-full ${EVIDENCE[c.evidence].className}`}>{EVIDENCE[c.evidence].label}</span>
+              <span className={`text-[10px] px-1.5 rounded-full ${evidenceBadge(c.evidence).className}`}>{evidenceBadge(c.evidence).label}</span>
             </div>
           ))}
           {s.commit_list.length > 8 && <span className="text-ink-2">and {s.commit_list.length - 8} more in Activity</span>}
@@ -90,6 +90,7 @@ export default function ThreadsTab({ repo, scope = 'mine', days: period = 30, fo
   const [metric, setMetric] = useState<Metric>('tokens');
   const [chart, setChart] = useState(false);
   const [showDropped, setShowDropped] = useState(false);
+  const [showExplored, setShowExplored] = useState(false);
   const base = useWorkOverview(repo, { days: period }, scope);
   const dayList = base.data?.daily.days;
   const range = useMemo(() => selRange(dayList ?? [], sel, tzOffsetMin()), [dayList, sel]);
@@ -111,8 +112,10 @@ export default function ThreadsTab({ repo, scope = 'mine', days: period = 30, fo
   const open = shown.filter(isOpen);
   const shipped = shown.filter((s) => s.state === 'shipped');
   const dropped = shown.filter((s) => s.state === 'dropped');
+  const explored = shown.filter((s) => s.state === 'explored');
   const shippedN = all.filter((s) => s.state === 'shipped').length;
   const droppedAll = all.filter((s) => s.state === 'dropped');
+  const exploredAll = all.filter((s) => s.state === 'explored');
   const spent = (xs: StoryT[]) => usd(xs.reduce((n, s) => n + s.cost, 0));
   const change = (cur: number, prev: number) => (period === 0 || !prev ? null
     : `${cur >= prev ? '↑' : '↓'} ${Math.round(Math.abs((cur - prev) / prev) * 100)}% vs previous ${period} days`);
@@ -120,6 +123,7 @@ export default function ThreadsTab({ repo, scope = 'mine', days: period = 30, fo
     { label: 'Shipped', value: num(shippedN), note: periodLabel(period) },
     { label: 'Open', value: num(all.filter((s) => OPEN_STATES.has(s.state)).length), note: 'not on main yet' },
     { label: 'Dropped', value: num(droppedAll.length), note: `${spent(droppedAll)} spent` },
+    { label: 'Explored', value: num(exploredAll.length), note: `${spent(exploredAll)} · no files edited` },
     { label: 'Spent', value: usd(tiles.cost), note: change(tiles.cost, prior.cost) },
     { label: 'Per shipped', value: shippedN ? usd(tiles.cost / shippedN) : '—', note: 'all spend ÷ shipped' },
   ];
@@ -136,7 +140,7 @@ export default function ThreadsTab({ repo, scope = 'mine', days: period = 30, fo
     : <p className="m-0 text-[12px] text-ink-2 p-2">None</p>);
   return (
     <div ref={list} className="flex flex-col gap-4">
-      <div role="group" aria-label="Outcomes" className="grid grid-cols-5 rounded-lg border border-line bg-bg-1">
+      <div role="group" aria-label="Outcomes" className="grid grid-cols-6 rounded-lg border border-line bg-bg-1">
         {stats.map((s, i) => (
           <div key={s.label} className={`px-5 py-3 flex flex-col gap-0.5 ${i ? 'border-l border-line' : ''}`}>
             <span className="text-[12px] text-ink-1">{s.label}</span>
@@ -150,12 +154,17 @@ export default function ThreadsTab({ repo, scope = 'mine', days: period = 30, fo
       <div className="grid grid-cols-3 gap-3 items-start">
         <Column name="Open" note={`${open.length}`}>{rows(open)}</Column>
         <Column name="Shipped" note={`${shipped.length}`}>{rows(shipped)}</Column>
-        <Column name="Dropped" note={spent(dropped)}>
+        <Column name="Not shipped" note={spent([...dropped, ...explored])}>
           <button type="button" aria-expanded={showDropped} onClick={() => setShowDropped((v) => !v)}
             className="text-left text-[12px] text-ink-1 hover:text-ink-0 px-1">
             {showDropped ? 'Hide' : 'Show'} {dropped.length} dropped · {spent(dropped)} spent
           </button>
           {showDropped && rows(dropped)}
+          <button type="button" aria-expanded={showExplored} onClick={() => setShowExplored((v) => !v)}
+            className="text-left text-[12px] text-ink-1 hover:text-ink-0 px-1">
+            {showExplored ? 'Hide' : 'Show'} {explored.length} explored · {spent(explored)} spent
+          </button>
+          {showExplored && rows(explored)}
         </Column>
       </div>
       <p className="m-0 text-[11px] text-ink-2">How a commit is tied to the work: {EVIDENCE_KEY}</p>

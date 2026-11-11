@@ -23,6 +23,9 @@ class SessionSummary:
     whole: dict | None = None   # the whole session's totals when the range cuts it
     model: str | None = None
     repo_id: int | None = None  # the folder the session ran in
+    # Project files the session edited, as paths inside the repo. Empty = it edited none;
+    # None = no record (its transcript was gone before the file-edit record existed).
+    files: frozenset[str] | None = None
 
 
 def _t(ts: str) -> float:
@@ -37,6 +40,13 @@ def _whole(group: list[SessionSummary]) -> dict | None:
              for s in group]
     return {"first_ts": min(p["first_ts"] for p in parts), "last_ts": max(p["last_ts"] for p in parts),
             "output_tokens": sum(p["output_tokens"] for p in parts), "cost": sum(p["cost"] for p in parts)}
+
+
+def _files_edited(group: list[SessionSummary]) -> int | None:
+    """How many project files the thread edited; None when that can't be said (a session
+    without a record might have edited some)."""
+    edited = len(frozenset().union(*(s.files for s in group if s.files is not None)))
+    return None if not edited and any(s.files is None for s in group) else edited
 
 
 def _story(group: list[SessionSummary]) -> dict:
@@ -72,16 +82,48 @@ def _story(group: list[SessionSummary]) -> dict:
         "deleted": sum(c["deleted"] for c in commits),
         "files": sum(c["files"] for c in commits),
         "skills": sorted({k for s in group for k in s.skills}),
+        "files_edited": _files_edited(group),
     }
 
 
-def group_stories(sessions: list[SessionSummary], gap_days: float = 2) -> list[dict]:
+# Branches many unrelated pieces of work pass through: being on one says nothing about a session.
+LONG_LIVED = frozenset({"main", "master", "trunk", "develop", "development", "dev", "HEAD"})
+# A session joins a thread when the files they share are at least this part of the smaller side:
+# one file everything touches (a changelog, a lockfile) among many is not a shared piece of work.
+SHARE = 0.25
+
+
+def _pull(s: SessionSummary, group: list[SessionSummary], long_lived: frozenset[str]) -> float:
+    """How strongly `s` belongs with `group`; 0 = not at all. Shared files are the evidence;
+    a feature branch holds its sessions together; without a file record only the branch is left."""
+    same_branch = any(p.branch == s.branch for p in group)
+    if s.files is None or any(p.files is None for p in group):
+        return 0.5 if same_branch else 0.0
+    theirs = frozenset().union(*(p.files for p in group))
+    shared = len(s.files & theirs)
+    if shared and shared / min(len(s.files), len(theirs)) >= SHARE:
+        return float(shared)
+    return 0.5 if same_branch and s.branch and s.branch not in long_lived else 0.0
+
+
+def group_stories(sessions: list[SessionSummary], gap_days: float = 2,
+                  long_lived: frozenset[str] | set[str] = frozenset()) -> list[dict]:
+    """Threads, newest first. A session joins the thread, active within `gap_days` before it,
+    that it belongs with most (see `_pull`); the more recent one on a tie. `long_lived` adds
+    the project's own default branches to the usual names."""
+    shared_branches = LONG_LIVED | frozenset(long_lived)
     groups: list[list[SessionSummary]] = []
     for s in sorted(sessions, key=lambda x: _t(x.first_ts)):
-        prev = groups[-1] if groups else None
-        if (prev and prev[-1].branch == s.branch
-                and _t(s.first_ts) - max(_t(p.last_ts) for p in prev) <= gap_days * 86_400):
-            prev.append(s)
-        else:
+        best, best_key = None, (0.0, 0.0)
+        for g in groups:
+            last = max(_t(p.last_ts) for p in g)
+            if _t(s.first_ts) - last > gap_days * 86_400:
+                continue
+            key = (_pull(s, g, shared_branches), last)
+            if key[0] > 0 and key > best_key:
+                best, best_key = g, key
+        if best is None:
             groups.append([s])
+        else:
+            best.append(s)
     return [_story(g) for g in reversed(groups)]

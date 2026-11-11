@@ -106,3 +106,13 @@ def test_a_malformed_tool_call_is_skipped(tmp_path):
     conn = open_work_db(tmp_path / "data")
     collect_edits(conn, adapter)
     assert list(_rows(conn)) == [normalize_project_path("C:\\proj\\a.py")]
+
+
+def test_a_session_read_for_edits_is_marked_even_when_it_made_none(tmp_path):
+    """"Read, edited nothing" and "never read" must differ: only the first lets a thread be
+    called explored."""
+    _, adapter = _setup(tmp_path, [_use("2026-09-01T10:00:00Z", "Read", file_path="C:\proj\README.md")])
+    conn = open_work_db(tmp_path / "data")
+    assert collect_edits(conn, adapter) == set()
+    assert [r[0] for r in conn.execute("SELECT session_id FROM edits_seen")] == [KEY]
+    assert _rows(conn) == {}

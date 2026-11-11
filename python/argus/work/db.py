@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS session_files (
   first_ts TEXT NOT NULL, last_ts TEXT NOT NULL,
   PRIMARY KEY (session_id, path)
 );
+CREATE TABLE IF NOT EXISTS edits_seen (session_id TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS pr_status (
   repo TEXT NOT NULL, number INTEGER NOT NULL, state TEXT NOT NULL, merged_at TEXT, checked_at TEXT,
   PRIMARY KEY (repo, number)

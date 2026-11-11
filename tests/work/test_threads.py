@@ -9,11 +9,11 @@ NOW = "2026-09-29T12:00:00Z"
 FOLDER = {"last_error": None, "default_ref": "refs/remotes/origin/main", "dirty": 0}
 
 
-def story(commits=(), prs=(), last_ts="2026-09-29T10:00:00Z", cost=0.44, branch="feat/x"):
+def story(commits=(), prs=(), last_ts="2026-09-29T10:00:00Z", cost=0.44, branch="feat/x", files_edited=None):
     # each commit: (on_default, pushed[, reachable[, landed]])
     return {"commit_list": [{"on_default": c[0], "pushed": c[1], **({"reachable": c[2]} if len(c) > 2 else {}),
                              **({"landed": c[3]} if len(c) > 3 else {})} for c in commits], "prs": list(prs),
-            "last_ts": last_ts, "cost": cost, "branch": branch}
+            "last_ts": last_ts, "cost": cost, "branch": branch, "files_edited": files_edited}
 
 
 CASES = [
@@ -31,6 +31,15 @@ CASES = [
     ("uncommitted", story(), {"dirty": 12}, True, "uncommitted", "folder has 12 changed files"),
     ("older thread can't claim the folder", story(), {"dirty": 12}, False, "dropped", "no commit · $0.44 spent"),
     ("clean folder, no commit", story(), {}, True, "dropped", "no commit · $0.44 spent"),
+    # with a file-edit record, a thread that changed nothing is a question, not abandoned work
+    ("asked, edited nothing", story(files_edited=0), {}, True, "explored", "no files edited · $0.44 spent"),
+    ("a read-only thread can't claim the folder's changes", story(files_edited=0), {"dirty": 12}, True,
+     "explored", "no files edited · $0.44 spent"),
+    ("edited, still in the folder", story(files_edited=3), {"dirty": 12}, True, "uncommitted", "folder has 12 changed files"),
+    ("edited, never committed, folder clean", story(files_edited=3), {}, True,
+     "dropped", "3 files edited, none committed · $0.44 spent"),
+    ("explored, with a PR", story(prs=[9], files_edited=0), {}, True,
+     "pr_open", "PR #9 open · from git; turn on GitHub check for exact status"),
     ("dirty but a week quiet", story(last_ts="2026-09-21T12:00:00Z"), {"dirty": 1}, True,
      "dropped", "no commit · $0.44 spent"),
     ("stalled at 3 days", story([(0, 1)], last_ts="2026-09-26T12:00:00Z"), {}, True, "stalled", "quiet for 3 days"),
@@ -84,3 +93,7 @@ def test_thread_state(name, s, over, newest, state, reason):
 
 def test_open_states():
     assert OPEN_STATES == {"uncommitted", "not_pushed", "pr_open", "stalled", "in_progress"}
+
+
+def test_explored_is_neither_open_nor_dropped():
+    assert "explored" not in OPEN_STATES

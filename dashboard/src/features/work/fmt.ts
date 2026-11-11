@@ -27,6 +27,15 @@ export const STATE: Record<ThreadStateT, { label: string; className: string }> =
   stalled: { label: 'STALLED', className: 'text-accent-ink border-accent/50' },
   shipped: { label: 'SHIPPED', className: 'text-[#5fd3a6] border-s3/50' },
   dropped: { label: 'DROPPED', className: 'text-ink-2 border-line-2' },
+  explored: { label: 'EXPLORED', className: 'text-ink-1 border-line-2' },
   unknown: { label: 'UNKNOWN', className: 'text-ink-1 border-dashed border-line-2' },
 };
 export const OPEN_STATES: ReadonlySet<ThreadStateT> = new Set(['uncommitted', 'not_pushed', 'pr_open', 'stalled', 'in_progress']);
+
+// The API can be newer than this built bundle (the backend runs from source, the dashboard
+// ships prebuilt), so a value missing from the maps above must still render.
+const words = (v: string) => v.replace(/_/g, ' ');
+export const evidenceBadge = (evidence: string): { label: string; className: string } =>
+  (EVIDENCE as Record<string, { label: string; className: string }>)[evidence] ?? { label: words(evidence), className: EVIDENCE.inferred.className };
+export const stateBadge = (state: string): { label: string; className: string } =>
+  (STATE as Record<string, { label: string; className: string }>)[state] ?? { label: words(state).toUpperCase(), className: STATE.unknown.className };

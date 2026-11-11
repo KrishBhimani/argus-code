@@ -72,6 +72,8 @@ def collect_edits(conn: sqlite3.Connection, adapter) -> set[str]:
         if adapter.should_skip(f):
             continue
         sid = f"claude_code:{f.stem}"
+        # "read for edits, found none" must differ from "never read": only the first is a fact
+        conn.execute("INSERT OR IGNORE INTO edits_seen (session_id) VALUES (?)", (sid,))
         for path in [f, *adapter.sub_session_files_for(f)]:
             conn.execute("BEGIN")
             try:

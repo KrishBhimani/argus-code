@@ -14,7 +14,7 @@ const SHOWN = 8;
 const plural = (n: number, w: string) => `${num(n)} ${w}${n === 1 ? '' : 's'}`;
 
 function OutcomeBar({ o }: { o: WorkProject['outcomes'] }) {
-  const total = o.shipped + o.open + o.dropped || 1;
+  const total = o.shipped + o.open + o.dropped + o.explored || 1;
   const w = (n: number) => `${(n / total) * 100}%`;
   return (
     <span className="flex flex-col gap-1.5">
@@ -22,8 +22,9 @@ function OutcomeBar({ o }: { o: WorkProject['outcomes'] }) {
         <span style={{ width: w(o.shipped) }} className="bg-[#4fc59a]" />
         <span style={{ width: w(o.open) }} className="bg-s1" />
         <span style={{ width: w(o.dropped) }} className="bg-line-2" />
+        <span style={{ width: w(o.explored) }} className="bg-bg-3 border-l border-line-2" />
       </span>
-      <span className="text-[11px] text-ink-1">{o.shipped} shipped · {o.open} open · {o.dropped} dropped</span>
+      <span className="text-[11px] text-ink-1">{o.shipped} shipped · {o.open} open · {o.dropped} dropped · {o.explored} explored</span>
     </span>
   );
 }
@@ -82,11 +83,11 @@ export default function ProjectsPage() {
                 <h1 className="text-[20px] font-semibold">
                   {open.length ? `${plural(open.length, 'thread')} open across ${plural(inProjects, 'project')}` : 'Nothing open'}
                 </h1>
-                <p className="text-[13px] text-ink-1">A thread is a piece of work with Claude. It closes when it lands on main, or after 7 quiet days.</p>
+                <p className="text-[13px] text-ink-1">A thread is a piece of work with Claude. It closes when it lands on main, or after 7 quiet days. One that edited no project file is explored: a question or a review.</p>
               </div>
               {counts && (
                 <p className="text-[12px] text-ink-2 whitespace-nowrap">
-                  {periodLabel(days)} · <b className="text-[#5fd3a6] font-medium">{counts.shipped} shipped</b> · <b className="text-[#8ab8ff] font-medium">{counts.open} open</b> · <b className="text-ink-1 font-medium">{counts.dropped} dropped</b>
+                  {periodLabel(days)} · <b className="text-[#5fd3a6] font-medium">{counts.shipped} shipped</b> · <b className="text-[#8ab8ff] font-medium">{counts.open} open</b> · <b className="text-ink-1 font-medium">{counts.dropped} dropped</b> · <b className="text-ink-1 font-medium">{counts.explored} explored</b>
                 </p>
               )}
             </div>

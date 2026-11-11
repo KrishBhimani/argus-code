@@ -17,7 +17,7 @@ vi.mock('@/app/shell/TopBar', () => ({
 const P = (o: object) => ({
   id: 1, display_name: 'p', root: '/p', present: true, last_error: null, active_ms: 0, active_estimated: false, tokens: 0, cost: 0,
   commits: 0, daily_tokens: [0, 0], last_worked_at: null, latest: null, folder_ids: [1], folders: [{ id: 1, root: '/p', present: true }],
-  outcomes: { shipped: 0, open: 0, dropped: 0 }, cost_per_shipped: null, ...o,
+  outcomes: { shipped: 0, open: 0, dropped: 0, explored: 0 }, cost_per_shipped: null, ...o,
 });
 const T = (o: object) => ({
   key: 'claude_code:k', project_id: 2, project_name: 'argus-code', title: 'Work/Projects redesign', branch: 'feat/work-threads-ui',
@@ -29,11 +29,11 @@ vi.mock('./api', () => ({
     asked.push(days);
     return { data: { projects: [
       P({ id: 2, display_name: 'argus-code', tokens: 1_413_735, cost: 279, commits: 51, last_worked_at: new Date().toISOString(),
-        outcomes: { shipped: 9, open: 1, dropped: 2 }, cost_per_shipped: 31 }),
+        outcomes: { shipped: 9, open: 1, dropped: 2, explored: 4 }, cost_per_shipped: 31 }),
       P({ id: 3, display_name: 'portfolio', present: false, last_worked_at: '2026-07-31T00:00:00Z' }),
     ] }, isLoading: false, error: null };
   },
-  useWorkThreads: () => ({ data: { open: state.open, counts: { shipped: 6, open: state.open.length, dropped: 2 }, remote_as_of: null }, error: null }),
+  useWorkThreads: () => ({ data: { open: state.open, counts: { shipped: 6, open: state.open.length, dropped: 2, explored: 5 }, remote_as_of: null }, error: null }),
 }));
 
 beforeEach(() => { state.open = [T({})]; nav.mockClear(); });
@@ -66,7 +66,7 @@ it('shows eight threads, then the rest on demand', () => {
 it('shows each project as outcomes, not raw output', () => {
   render(<ProjectsPage />);
   const card = within(screen.getByRole('button', { name: /argus-code/ }));
-  expect(card.getByText('9 shipped · 1 open · 2 dropped')).toBeInTheDocument();
+  expect(card.getByText('9 shipped · 1 open · 2 dropped · 4 explored')).toBeInTheDocument();
   expect(card.getByText('$31.00')).toBeInTheDocument();
   expect(card.getByText('51')).toBeInTheDocument();          // the user's own commits
 });
@@ -89,4 +89,9 @@ it('the period chips change the period', () => {
 it('formats hours', () => {
   expect(hours(68_400_000)).toBe('19h');
   expect(hours(720_000, true)).toBe('≈12m');
+});
+
+it('counts explored threads apart from dropped ones', () => {
+  render(<ProjectsPage />);
+  expect(screen.getByText('5 explored')).toBeInTheDocument();
 });
