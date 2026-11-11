@@ -3,7 +3,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..adapters.base import Adapter, AdapterIngestResult, RawSegment, RawToolCall
+from ..adapters.base import (
+    Adapter,
+    AdapterIngestResult,
+    RawSegment,
+    RawToolCall,
+    native_session_id_for,
+)
 from ..pricing.types import PricingTable
 from ..schema.types import (
     RawSessionHeader,
@@ -340,7 +346,7 @@ def _ingest_file(
                 continue
 
         for sub in grown:
-            sub_session_id = f"{session_id}/{sub.stem}"
+            sub_session_id = f"{session_id}/{native_session_id_for(adapter, sub)}"
             sub_from_offset = repo.get_file_offset(str(sub))
             sub_result, sub_new_offset = adapter.ingest_file(sub, sub_from_offset)
             if not sub_result.turns and repo.get_session(sub_session_id) is None:
@@ -394,7 +400,7 @@ def _ingest_file(
             for sub in sub_files:
                 if sub in grown:
                     continue
-                stored_sub = repo.get_session(f"{session_id}/{sub.stem}")
+                stored_sub = repo.get_session(f"{session_id}/{native_session_id_for(adapter, sub)}")
                 if stored_sub is not None:
                     sub_sessions.append(stored_sub)
 

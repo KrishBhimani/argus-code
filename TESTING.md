@@ -144,6 +144,31 @@ log directory:
 - ingesting a real session keeps parse errors below 5% (loose
   conformance check against real-world JSONL drift)
 
+### `tests/adapters/codex/` (Python)
+
+Fixtures are synthetic, mirroring real Codex rollout shapes (cli 0.159.2).
+
+- `test_lines.py` — envelope reader: file-wide offsets, partial-line holdback,
+  unknown shapes skipped, parse errors carry no line content.
+- `test_discover.py` — `CODEX_HOME`, session-dir containment, identity from the
+  first record, continuation segments, sub-agent descendants, orphan children.
+- `test_records.py` — token mapping, `exec`/`wait` wrappers not counted, MCP
+  counted from its item, error signals, privacy of transcript segments.
+- `test_state.py` — the per-file fold, open-task snapshot, `ContextCache`,
+  copied-history cutoff.
+- `test_ingest_file.py` — turns from usage records, call-to-response
+  assignment, legacy `token_count` fallback, header metadata, no secrets.
+- `test_adapter.py` — registration, absent `CODEX_HOME`, skip rules, partial
+  head, containment, every protocol hook defined.
+- `test_real_root.py` — gated by `ARGUS_REAL_CODEX_ROOT`: stored output tokens
+  per thread equal the rollouts' usage records.
+
+Collector level: `tests/collector/test_codex_incremental_invariant.py` (chunked
+== one pass, cold cache, partial first line) and
+`tests/collector/test_pipeline_codex.py` (sub-agent rollup with copied history,
+continuation merge, archive move, Claude + Codex side by side);
+`tests/collector/test_session_files.py` (agent-qualified file lookup).
+
 ### `src/collector/`
 
 #### `aggregate.test.ts` — session aggregation (2 tests)

@@ -4,7 +4,7 @@
 
 <h1>Argus</h1>
 
-<p><strong>The observability console for Claude Code — local-first, permanent, and honest about cost.</strong></p>
+<p><strong>The observability console for Claude Code and Codex — local-first, permanent, and honest about cost.</strong></p>
 
 <p>
   <a href="#-quick-start"><b>Quick start</b></a> ·
@@ -25,12 +25,12 @@
 
 </div>
 
-Claude Code writes a detailed transcript of every session to `~/.claude/` — every turn,
-every token, every tool call, every sub-agent it spawned — and then tells you almost
-nothing about it. Argus tails those files into a SQLite archive on your machine, prices
-each turn, and serves a dashboard at `http://localhost:4242` that answers the questions
-the transcripts never do: *what am I spending, where did it go, and which turn made it
-so?*
+Claude Code and OpenAI Codex write a detailed transcript of every session to disk
+(`~/.claude/`, `~/.codex/`) — every turn, every token, every tool call, every sub-agent
+they spawned — and then tell you almost nothing about it. Argus tails those files into
+a SQLite archive on your machine, prices each turn, and serves a dashboard at
+`http://localhost:4242` that answers the questions the transcripts never do: *what am I
+spending, where did it go, and which turn made it so?*
 
 Nothing leaves your computer. No telemetry, no API calls, no embeddings — SQLite and a
 static web app, bound to `127.0.0.1`.
@@ -46,7 +46,16 @@ argus start
 
 Your browser opens once the first pass finishes (5–10 s for a typical install). From
 then on, every session you run is ingested live. All you need is Python ≥ 3.11 and a
-`~/.claude/` directory — i.e. you've used Claude Code at least once.
+`~/.claude/` directory or a Codex home — i.e. you've used Claude Code or Codex at least once.
+
+**Supported agents.** Argus detects whichever you use, no configuration needed:
+
+| Agent | Reads from | Notes |
+|---|---|---|
+| **Claude Code** | `~/.claude/` (session transcripts under `projects/`, prompt history) | Sessions, sub-agents and your typed prompts. |
+| **OpenAI Codex** | `$CODEX_HOME` (default `~/.codex`) — only `sessions/` and `archived_sessions/` | Never opens `auth.json`, config or state databases. Costs use OpenAI's standard-tier API rates — an API-equivalent figure, since Codex plans are usually billed by subscription. |
+
+Use both and the Sessions page gains an agent filter and column.
 
 ## ✨ Why Argus
 
@@ -89,8 +98,8 @@ chronological thread.
 
 When a session delegates to sub-agents, Argus keeps each one: the **task as it was
 given**, its tools, tokens, cost, shape and full timeline — with an at-a-glance strip
-that turns red where an agent failed. No more guessing what that `Task` call actually
-did.
+that turns red where an agent failed. No more guessing what that `Task` or
+`spawn_agent` call actually did.
 
 <img src="https://raw.githubusercontent.com/KrishBhimani/argus-code/main/assets/screenshots/subagents.png" alt="Sub-agents — task given, tools used, per-agent shape and cost">
 
@@ -230,9 +239,9 @@ Vulnerability reports: [SECURITY.md](./SECURITY.md).
 
 ## ⚙️ How it works
 
-1. **Ingest.** A `watchdog` observer tails `~/.claude/projects/<project>/<session>.jsonl`. Lines are validated with `pydantic`, de-duplicated by `message.id`, and normalised into session / turn rows in SQLite (WAL mode). Resumed sessions and sub-agent files are folded into their parent.
-2. **Cost.** Per-turn cost comes from a bundled price table sourced from [LiteLLM](https://github.com/BerriAI/litellm). Tokens are exact; costs are estimates.
-3. **Tools.** Each `tool_use` block becomes a row; errors come from the matching `tool_result`. MCP servers are parsed from `mcp__<server>__<tool>`; the `Agent` tool's `subagent_type` is kept so delegation is visible.
+1. **Ingest.** A `watchdog` observer tails each agent's transcripts through a per-agent adapter — Claude Code's `~/.claude/projects/<project>/<session>.jsonl` and Codex's rollouts under `$CODEX_HOME/sessions/`. Lines are validated, de-duplicated by the agent's own ids (Claude's `message.id`, Codex's `response_id`), and normalised into session / turn rows in SQLite (WAL mode). Resumed or continued sessions and sub-agent files are folded into their parent.
+2. **Cost.** Per-turn cost comes from a bundled price table (Anthropic's and OpenAI's published rates; `argus pricing refresh` can pull [LiteLLM](https://github.com/BerriAI/litellm)'s). Tokens are exact; costs are estimates.
+3. **Tools.** For Claude Code, each `tool_use` block becomes a row and errors come from the matching `tool_result`; for Codex, each completed action (shell command with its exit code, file change, MCP call, web search, `spawn_agent`) becomes a row, with errors only from explicit failure signals. MCP servers are shown as `mcp__<server>__<tool>`; sub-agent types are kept so delegation is visible.
 4. **Search (opt-in).** Two FTS5 tables — one over your prompt history, one over transcript text — indexed incrementally during the normal ingest tick.
 5. **Detection.** A scheduler runs registered *detectors* every 10 minutes; findings land in an alerts inbox with a seen / resolved lifecycle, so an issue that recovers and recurs fires again instead of staying silent.
 6. **Dashboard.** A Vite + React single-page app (uPlot and hand-drawn SVG charts), statically built and served by the FastAPI app. No Node at runtime, no network beyond `/api/*`.
@@ -262,7 +271,7 @@ Argus keeps its own copy regardless — this only widens what Claude itself reta
 ## 📋 Requirements
 
 - **Python ≥ 3.11** with an FTS5-enabled `sqlite3` (the standard CPython builds for macOS, Linux and Windows all are; Argus checks at startup and says so clearly if not).
-- A `~/.claude/` directory with real session JSONL — i.e. you've used Claude Code at least once.
+- A `~/.claude/` directory with real session JSONL, or a Codex home (`$CODEX_HOME`, default `~/.codex`) with rollouts under `sessions/`.
 
 ## 🛠️ Development
 
@@ -270,7 +279,7 @@ Argus keeps its own copy regardless — this only widens what Claude itself reta
 git clone https://github.com/KrishBhimani/argus-code.git
 cd argus-code
 uv sync               # install deps + create venv
-uv run pytest         # ~490 tests, ~35 s
+uv run pytest         # ~700 tests, ~45 s
 uv run argus start    # runs directly from source
 ```
 
@@ -284,7 +293,7 @@ wheel, so end users never touch `npm`. See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ```
 python/argus/         Python ingest, store, server, CLI
-  adapters/           Claude Code JSONL parsers + adapter registry
+  adapters/           Claude Code + Codex parsers + adapter registry
   store/              SQLite schema + migrations + repo
   server/             FastAPI app + /api routes
   collector/          watcher + pipeline + first-run + search backfill + alert scheduler
@@ -313,6 +322,6 @@ tests/                pytest suite, mirrors python/argus/ layout
 
 <p><i>Named for Argus Panoptes — the watchman with a hundred eyes, who never slept.</i></p>
 
-<p>If it keeps good watch for you, a ⭐ helps other Claude Code users find it.</p>
+<p>If it keeps good watch for you, a ⭐ helps other Claude Code and Codex users find it.</p>
 
 </div>

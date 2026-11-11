@@ -52,7 +52,12 @@ after a schema/feature upgrade.
   the real archive this rule agreed with the transcript-verified parent.
 - **Sub-agents are walked via the parent.** A parent ingest discovers
   `adapter.sub_session_files_for(parent)` and ingests any that **grew past their
-  offset**. Sub-agent session ids contain `/` (`<parent>/agent-<hex>`).
+  offset**. Sub-agent session ids contain `/`: `<parent>/<native id of the sub
+  file>` (`native_session_id_for`; Claude `agent-<hex>`, Codex the child thread id).
+- **Never assume native session id == file stem.** Backfills map a stored id to
+  its files with `session_files.files_by_session(adapters)`:
+  `"<agent>:<native id>" -> [(adapter, path), ...]` — agent-qualified, and a list
+  because one Codex thread can span several rollout files (all are re-read).
   A sub-agent with no stored session and no turns in this read (typically just
   its prompt) is **skipped without advancing its offset**: its segments would
   reference a missing session row (FOREIGN KEY failure, which rolls back the

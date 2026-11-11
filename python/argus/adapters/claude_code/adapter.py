@@ -70,5 +70,8 @@ class ClaudeCodeAdapter:
         # never as standalone sessions.
         return "subagents" in path.parts
 
+    def native_session_id(self, path: Path) -> str:
+        return path.stem
+
     def normalize_model_name(self, raw: str) -> str:
         return canonicalize_claude_model(raw)
