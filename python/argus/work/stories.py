@@ -42,7 +42,7 @@ def _whole(group: list[SessionSummary]) -> dict | None:
 def _story(group: list[SessionSummary]) -> dict:
     lead = max(group, key=lambda s: s.active_ms)
     commits = [c for s in group for c in s.commits]
-    ev = {"exact": 0, "coauthored": 0, "inferred": 0}
+    ev = {"exact": 0, "files": 0, "coauthored": 0, "inferred": 0}
     for c in commits:
         ev[c["evidence"]] += 1
     return {

@@ -45,7 +45,7 @@ analyses in `src/lib/analysis/`.
   Settings shows the GitHub PR status panel (`features/work/GithubPanel.tsx`) only when
   the trial is on; it calls the same `/api/work/github*` as `argus work github …`.
   Commit evidence is shown in plain words via `fmt.ts` `EVIDENCE` (exact → made here,
-  coauthored → Claude co-author, inferred → likely); keep that mapping in one place.
+  files → edited here, coauthored → Claude co-author, inferred → likely); keep that mapping in one place.
 - **SPA routing.** Deep links (`/sessions/<id>`) are served by the `index.html`
   fallback in `python/argus/server/app.py`; legacy `/session?id=` and `/prompts`
   URLs redirect client-side (`src/routes/session.tsx`, `src/routes/prompts.tsx`).

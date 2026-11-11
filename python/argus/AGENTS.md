@@ -41,7 +41,7 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   is unit-tested with a fake `kernel32`, not exercised on Windows in CI.
 - `work/` — **trial** (opt-in `argus start --work`, `argus work scan|status`): local git
   history + transcript facts the pipeline skips, session↔commit links labelled
-  `exact`/`coauthored`/`inferred`, and `/api/work/*`. Writes only
+  `exact`/`files`/`coauthored`/`inferred`, and `/api/work/*`. Writes only
   `<data_dir>/work.db`; `argus.db` is reached solely through a read-only `ATTACH`
   (asserted by `tests/work/test_isolation.py`). Nothing imports it unless the flag is
   on. Removal = delete this package, `features/work/`, two routes, and `work.db`.
@@ -52,7 +52,25 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   timing links (`coauthored`, `inferred`) are offered only for commits the user authored
   (`repos.user_emails` + the global git email); an agent co-author trailer says how a
   commit was written, never whose it is. "Mine" scope = authored by the user, or `exact`
-  (a session's transcript shows it making that sha). Columns added
+  (a session's transcript shows it making that sha).
+  **File-edit record** (`work/edits.py`, table `session_files`): one row per session and
+  file it edited (`Edit`/`Write`/`MultiEdit`/`NotebookEdit` inputs; normalized absolute
+  path, edit count, first and last time), sub-agent edits rolled up to the session that
+  started them. It reads the transcripts with its own offsets (`file_offsets` keys
+  prefixed `edits:`), so it never moves the facts pass's place and backfills on a
+  `work.db` made before it. Attempted edits count; shell-only changes are not seen;
+  sessions whose transcript is already deleted have no rows and keep the older rules.
+  Two things are derived from it. *Where a session belongs* (`collector._assign_by_edits`,
+  for sessions with new lines): the project with the most edited files, counted across
+  its folders, then that project's folder with the most; the starting folder wins a tie;
+  no in-repo edit leaves the `cwd` mapping. A file's repo is the nearest folder above it
+  holding `.git`, so a nested repo or worktree is its own folder. When the chosen folder
+  is not the starting one, `git_branch` is cleared (it described the other folder). A
+  session still belongs to exactly one project; its cost is not split.
+  *`files` evidence* (`linker.py`, above the two timing levels): a commit the user
+  authored that changes a file the session edited before it, at most `FILES_WINDOW_MS`
+  (7 days) earlier, with no other commit having changed that file in between; more
+  shared files wins, then the nearer edit. Columns added
   after the first trial build are added in `open_work_db` only when missing.
   Time comes from one source per session, best first: `measured` (transcript
   `turn_duration`), `estimated` (transcript gaps), `archive` (argus.db turn gaps, for

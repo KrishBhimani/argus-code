@@ -11,6 +11,7 @@ from pathlib import Path
 from ..store.repository import normalize_project_path
 from . import github, gitscan
 from .db import open_work_db, set_meta
+from .edits import collect_edits
 from .facts import GAP_CAP_MS, collect_facts
 from .linker import link_repo
 
@@ -22,7 +23,7 @@ WORK_THREAD_NAME = "argus-work"
 class PassResult:
     repos: int = 0
     commits: int = 0
-    links: dict[str, int] = field(default_factory=lambda: {"exact": 0, "coauthored": 0, "inferred": 0})
+    links: dict[str, int] = field(default_factory=lambda: {"exact": 0, "files": 0, "coauthored": 0, "inferred": 0})
     errors: dict[str, str] = field(default_factory=dict)
 
 
@@ -122,17 +123,104 @@ def _map_sessions(conn) -> None:
             conn.execute("UPDATE session_repo SET repo_id = ? WHERE session_id = ?", (rid, s["session_id"]))
 
 
+def _repo_of(conn, path: str, known: dict[str, int], seen: dict[str, int | None]) -> int | None:
+    """The repo a file or folder is in: the nearest folder above it holding `.git`
+    (a worktree counts), found on disk without running git per file. When the folders are
+    gone, the longest known repo root that contains the path."""
+    walked = []
+    d = Path(path)
+    rid = None
+    while True:
+        key = str(d)
+        if key in seen:
+            rid = seen[key]
+            break
+        walked.append(key)
+        if (d / ".git").exists():
+            root = gitscan.repo_root(key)   # git's own spelling of the root, as `repos.root` stores it
+            if root:
+                rid = gitscan.ensure_repo(conn, root)
+                known[normalize_project_path(root)] = rid
+                break
+        if d.parent == d:
+            p = normalize_project_path(path)
+            rid = next((i for r, i in sorted(known.items(), key=lambda kv: -len(kv[0]))
+                        if p == r or p.startswith(r + "/")), None)
+            break
+        d = d.parent
+    for key in walked:
+        seen[key] = rid
+    return rid
+
+
+def _assign_by_edits(conn, sids: set[str]) -> None:
+    """A session belongs to the project where it edited the most files, not to the folder it was
+    started in: files are counted per project (a repo's clones and worktrees together), then the
+    session goes to that project's folder with the most of them. Its starting folder wins a tie;
+    with no edit inside any repo it stays put."""
+    if not sids:
+        return
+    known = {normalize_project_path(r["root"]): r["id"] for r in conn.execute("SELECT id, root FROM repos")}
+    seen: dict[str, int | None] = {}
+    keys: dict[int, str] = {}
+
+    def project(rid: int) -> str:
+        if rid not in keys:
+            row = conn.execute("SELECT root, project_key FROM repos WHERE id = ?", (rid,)).fetchone()
+            # a folder first seen in this pass has no key yet: the scan below stores it
+            keys[rid] = row["project_key"] or (gitscan.project_key(row["root"]) if Path(row["root"]).is_dir() else f"id:{rid}")
+        return keys[rid]
+    for sid in sorted(sids):
+        where = conn.execute("SELECT repo_id, cwd FROM session_repo WHERE session_id = ?", (sid,)).fetchone()
+        if where is None:
+            continue
+        files: dict[int, int] = {}
+        edits: dict[int, int] = {}
+        for f in conn.execute("SELECT path, edits FROM session_files WHERE session_id = ?", (sid,)):
+            rid = _repo_of(conn, str(Path(f["path"]).parent), known, seen)
+            if rid is not None:
+                files[rid] = files.get(rid, 0) + 1
+                edits[rid] = edits.get(rid, 0) + f["edits"]
+        if not files:
+            continue
+        home = _repo_of(conn, where["cwd"], known, seen) if where["cwd"] else None
+        home_key = project(home) if home is not None else None
+        total: dict[str, list[int]] = {}
+        for rid in files:
+            t = total.setdefault(project(rid), [0, 0])
+            t[0] += files[rid]
+            t[1] += edits[rid]
+        best = max(total, key=lambda k: (total[k][0], k == home_key, total[k][1], k))
+        chosen = max((r for r in files if project(r) == best), key=lambda r: (files[r], r == home, edits[r], -r))
+        if chosen != home:
+            # the transcript's branch is the starting folder's, and says nothing about this repo
+            conn.execute("UPDATE session_repo SET repo_id = ?, git_branch = NULL WHERE session_id = ?", (chosen, sid))
+        elif where["repo_id"] != chosen:
+            conn.execute("UPDATE session_repo SET repo_id = ? WHERE session_id = ?", (chosen, sid))
+
+
 def run_pass(data_dir: Path, adapter, now_iso: str | None = None) -> PassResult:
     now = now_iso or _now()
     res = PassResult()
     conn = open_work_db(data_dir)
     try:
+        touched: set[str] = set()
         try:
-            collect_facts(conn, adapter)
+            touched |= collect_facts(conn, adapter)
         except Exception as e:  # noqa: BLE001
             logger.warning("work: transcript facts failed: %s", e)
             res.errors["facts"] = str(e)
+        try:
+            touched |= collect_edits(conn, adapter)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("work: transcript edits failed: %s", e)
+            res.errors["edits"] = str(e)
         _map_sessions(conn)
+        try:   # after the folder mapping: the files a session edited outrank where it started
+            _assign_by_edits(conn, touched)
+        except Exception as e:  # noqa: BLE001  never stop the pass
+            logger.warning("work: assigning sessions by edits failed: %s", e)
+            res.errors["assign"] = str(e)
         try:
             _fill_from_archive(conn)
         except Exception as e:  # noqa: BLE001  never stop the pass

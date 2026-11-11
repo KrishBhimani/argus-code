@@ -9,13 +9,14 @@ export const hours = (ms: number, estimated = false): string => {
   return estimated ? `≈${s}` : s;
 };
 
-/** How a commit is tied to the work, in plain words (the API's exact / coauthored / inferred). */
-export const EVIDENCE: Record<'exact' | 'coauthored' | 'inferred', { label: string; className: string }> = {
+/** How a commit is tied to the work, in plain words (the API's exact / files / coauthored / inferred). */
+export const EVIDENCE: Record<'exact' | 'files' | 'coauthored' | 'inferred', { label: string; className: string }> = {
   exact: { label: 'made here', className: 'bg-s3/20 text-[#5fd3a6]' },
+  files: { label: 'edited here', className: 'bg-s3/10 text-[#5fd3a6]' },
   coauthored: { label: 'Claude co-author', className: 'bg-s1/20 text-[#8ab8ff]' },
   inferred: { label: 'likely', className: 'bg-bg-3 text-ink-1' },
 };
-export const EVIDENCE_KEY = 'made here: the session ran the commit · Claude co-author: the commit names Claude · likely: committed within 30 min of a Claude turn';
+export const EVIDENCE_KEY = 'made here: the session ran the commit · edited here: the commit changes files the session edited · Claude co-author: the commit names Claude · likely: committed within 30 min of a Claude turn';
 
 /** A thread's state as a badge: text always, colour second (blue/amber vs green/grey, not red/green). */
 export const STATE: Record<ThreadStateT, { label: string; className: string }> = {

@@ -4,6 +4,7 @@ import { tzOffsetMin } from '@/lib/api/client';
 
 const VALIDATE = import.meta.env.DEV || import.meta.env.MODE === 'test';
 
+const Evidence = z.enum(['exact', 'files', 'coauthored', 'inferred']);
 const ThreadState = z.enum(['uncommitted', 'not_pushed', 'pr_open', 'stalled', 'in_progress', 'shipped', 'dropped', 'unknown']);
 const Outcomes = z.object({ shipped: z.number(), open: z.number(), dropped: z.number() });
 
@@ -25,7 +26,7 @@ const Named = z.object({ name: z.string(), value: z.number() });
 export const Story = z.object({
   title: z.string(), branch: z.string().nullable(), prs: z.array(z.number()), sessions: z.number(), session_ids: z.array(z.string()),
   active_ms: z.number(), active_estimated: z.boolean(), cost: z.number(), first_ts: z.string(), last_ts: z.string(),
-  commits: z.object({ total: z.number(), exact: z.number(), coauthored: z.number(), inferred: z.number() }),
+  commits: z.object({ total: z.number(), exact: z.number(), files: z.number(), coauthored: z.number(), inferred: z.number() }),
   added: z.number(), deleted: z.number(), files: z.number(), skills: z.array(z.string()), output_tokens: z.number(),
   // Set when the range shows only part of a session: that session's totals end to end.
   whole: z.object({ first_ts: z.string(), last_ts: z.string(), output_tokens: z.number(), cost: z.number() }).nullable(),
@@ -33,7 +34,7 @@ export const Story = z.object({
     session_id: z.string(), title: z.string().nullable(), model: z.string().nullable(), turns: z.number(),
     first_ts: z.string(), last_ts: z.string(), active_ms: z.number(), active_estimated: z.boolean(),
   })),
-  commit_list: z.array(z.object({ sha: z.string(), subject: z.string(), evidence: z.enum(['exact', 'coauthored', 'inferred']) })),
+  commit_list: z.array(z.object({ sha: z.string(), subject: z.string(), evidence: Evidence })),
   // The thread's state from git: its key is its first session's id.
   key: z.string(), state: ThreadState, reason: z.string(), remote_as_of: z.string().nullable(),
 });
@@ -46,7 +47,6 @@ export const WorkOverview = z.object({
   stories: z.array(Story),
   breakdowns: z.object({ branches: z.array(Named), skills: z.array(Named), files: z.array(Named) }),
 });
-const Evidence = z.enum(['exact', 'coauthored', 'inferred']);
 const NestedCommit = z.object({ sha: z.string(), evidence: Evidence, added: z.number(), deleted: z.number(), files: z.number(), subject: z.string(), author_name: z.string() });
 const SessionItem = z.object({
   kind: z.literal('session'), session_id: z.string(), title: z.string().nullable(), branch: z.string().nullable(), first_ts: z.string(), last_ts: z.string(),

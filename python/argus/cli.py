@@ -573,7 +573,7 @@ def work_scan(
     r = run_pass(data_dir, ClaudeCodeAdapter(claude_root))
     typer.echo(
         f"{r.repos} repo(s), {r.commits} commit(s) read; links: "
-        f"{r.links['exact']} exact, {r.links['coauthored']} co-authored, {r.links['inferred']} inferred"
+        f"{r.links['exact']} exact, {r.links['files']} by files, {r.links['coauthored']} co-authored, {r.links['inferred']} inferred"
     )
     for where, err in r.errors.items():
         typer.echo(f"  ! {where}: {err}", err=True)

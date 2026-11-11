@@ -20,7 +20,7 @@ def test_commit_counts_by_evidence():
     (story,) = group_stories([S("a", "feat", "2026-09-01T10:00:00Z", "2026-09-01T11:00:00Z", commits=[
         {"sha": "1", "evidence": "exact", "added": 10, "deleted": 2, "files": 3},
         {"sha": "2", "evidence": "inferred", "added": 1, "deleted": 0, "files": 1}])])
-    assert story["commits"] == {"total": 2, "exact": 1, "coauthored": 0, "inferred": 1}
+    assert story["commits"] == {"total": 2, "exact": 1, "files": 0, "coauthored": 0, "inferred": 1}
     assert (story["added"], story["deleted"], story["files"]) == (11, 2, 4)
 
 

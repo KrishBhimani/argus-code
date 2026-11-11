@@ -3,7 +3,7 @@ import ThreadsTab from './ThreadsTab';
 
 const story = (o: object) => ({
   key: 'k', title: 't', branch: 'main', prs: [] as number[], sessions: 1, session_ids: ['k'], active_ms: 0, active_estimated: false, cost: 10,
-  first_ts: '2026-09-16T10:00:00Z', last_ts: '2026-09-16T12:00:00Z', commits: { total: 0, exact: 0, coauthored: 0, inferred: 0 },
+  first_ts: '2026-09-16T10:00:00Z', last_ts: '2026-09-16T12:00:00Z', commits: { total: 0, exact: 0, files: 0, coauthored: 0, inferred: 0 },
   added: 0, deleted: 0, files: 0, skills: [] as string[], output_tokens: 1000, whole: null, remote_as_of: null,
   state: 'shipped', reason: '1 commit on main', session_list: [] as object[], commit_list: [] as object[], ...o,
 });

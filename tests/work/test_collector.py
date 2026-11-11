@@ -218,3 +218,97 @@ def test_a_squash_that_landed_before_the_first_scan_is_found_in_that_scan(tmp_pa
     row = conn.execute("""SELECT r.landed FROM commits c JOIN commit_reach r USING (repo_id, sha)
                           WHERE c.subject = 'feat: session work'""").fetchone()
     assert row["landed"] == 1
+
+
+def _edit_line(ts: str, cwd: Path, path: Path) -> str:
+    return json.dumps({"type": "assistant", "sessionId": SID, "cwd": str(cwd), "timestamp": ts, "message": {
+        "id": f"e-{ts}", "role": "assistant", "model": "claude-opus-5",
+        "content": [{"type": "tool_use", "id": f"t-{ts}", "name": "Edit", "input": {"file_path": str(path)}}],
+        "usage": {"input_tokens": 1, "output_tokens": 1}}}) + "\n"
+
+
+def _transcript(tmp_path: Path) -> Path:
+    return tmp_path / ".claude" / "projects" / "p" / f"{SID}.jsonl"
+
+
+def _session_project(data: Path) -> str | None:
+    conn = open_work_db(data)
+    row = conn.execute("SELECT r.display_name FROM session_repo s LEFT JOIN repos r ON r.id = s.repo_id").fetchone()
+    conn.close()
+    return row[0]
+
+
+def test_a_session_started_outside_any_repo_joins_the_repo_whose_files_it_edited(tmp_path):
+    """Regression: 15 of 81 real sessions were started in a plain parent folder and were
+    missing from Work, though the files they edited were inside a repo."""
+    parent = tmp_path / "space"
+    repo = make_repo(parent / "proj")
+    data, adapter = _world(tmp_path, parent)
+    run_pass(data, adapter, now_iso="2026-09-05T00:00:00Z")
+    assert _session_project(data) is None                       # nothing edited yet: still nowhere
+    with _transcript(tmp_path).open("a", encoding="utf-8") as fh:
+        fh.write(_edit_line("2026-09-02T09:21:00Z", parent, repo / "a.py"))
+    run_pass(data, adapter, now_iso="2026-09-05T00:00:00Z")
+    assert _session_project(data) == "proj"
+
+
+def test_a_session_belongs_to_the_repo_where_it_edited_most(tmp_path):
+    here, there = make_repo(tmp_path / "here"), make_repo(tmp_path / "there")
+    data, adapter = _world(tmp_path, here)
+    with _transcript(tmp_path).open("a", encoding="utf-8") as fh:
+        fh.write(_edit_line("2026-09-02T09:21:00Z", here, here / "a.py"))
+        fh.write(_edit_line("2026-09-02T09:22:00Z", here, there / "a.py"))
+        fh.write(_edit_line("2026-09-02T09:23:00Z", here, there / "b.py"))
+    run_pass(data, adapter, now_iso="2026-09-05T00:00:00Z")
+    assert _session_project(data) == "there"
+    conn = open_work_db(data)
+    assert conn.execute("SELECT git_branch FROM session_repo").fetchone()[0] is None   # "main" was the other repo's branch
+    conn.close()
+    run_pass(data, adapter, now_iso="2026-09-05T00:00:00Z")      # a pass with nothing new keeps the answer
+    assert _session_project(data) == "there"
+
+
+def test_a_tie_or_edits_outside_every_repo_leave_the_session_where_it_ran(tmp_path):
+    here, there = make_repo(tmp_path / "here"), make_repo(tmp_path / "there")
+    data, adapter = _world(tmp_path, here)
+    with _transcript(tmp_path).open("a", encoding="utf-8") as fh:
+        fh.write(_edit_line("2026-09-02T09:21:00Z", here, here / "a.py"))
+        fh.write(_edit_line("2026-09-02T09:22:00Z", here, there / "a.py"))
+        fh.write(_edit_line("2026-09-02T09:23:00Z", here, tmp_path / "scratch" / "notes.md"))
+    run_pass(data, adapter, now_iso="2026-09-05T00:00:00Z")
+    assert _session_project(data) == "here"
+    conn = open_work_db(data)
+    assert conn.execute("SELECT git_branch FROM session_repo").fetchone()[0] == "main"
+    conn.close()
+
+
+def test_a_hand_made_commit_of_edited_files_is_linked_by_files(tmp_path):
+    repo = make_repo(tmp_path / "proj")
+    data, adapter = _world(tmp_path, repo)
+    with _transcript(tmp_path).open("a", encoding="utf-8") as fh:
+        fh.write(_edit_line("2026-09-02T10:00:00Z", repo, repo / "a.py"))   # after "fix: second" already took a.py
+    (repo / "a.py").write_text("print(4)\n")
+    git(repo, "commit", "-q", "-am", "feat: by hand, next day", date="2026-09-03T15:00:00Z")
+    res = run_pass(data, adapter, now_iso="2026-09-05T00:00:00Z")
+    conn = open_work_db(data)
+    by_subject = {r["subject"]: r["evidence"] for r in conn.execute(
+        "SELECT c.subject, sc.evidence FROM session_commits sc JOIN commits c ON c.sha = sc.sha")}
+    conn.close()
+    assert by_subject["feat: by hand, next day"] == "files"
+    assert res.links["files"] >= 1
+
+
+def test_a_projects_worktrees_count_together_when_choosing_where_a_session_belongs(tmp_path):
+    """Seen on real data: 11 files across a repo's checkout and worktree lost to 34 in another
+    repo, rightly; but 4 files split 2 + 2 must not lose to 3 files in another repo."""
+    here, there = make_repo(tmp_path / "here"), make_repo(tmp_path / "there")
+    git(there, "config", "remote.origin.url", "https://github.com/o/there.git")   # a different project
+    wt = tmp_path / "here-wt"
+    git(here, "worktree", "add", "-q", str(wt), "-b", "wt")
+    data, adapter = _world(tmp_path, here)
+    with _transcript(tmp_path).open("a", encoding="utf-8") as fh:
+        for i, f in enumerate((here / "a.py", here / "b.py", wt / "a.py", wt / "b.py",
+                               there / "a.py", there / "b.py", there / "c.py")):
+            fh.write(_edit_line(f"2026-09-02T09:2{i}:00Z", here, f))
+    run_pass(data, adapter, now_iso="2026-09-05T00:00:00Z")
+    assert _session_project(data) == "here"    # its project has 4 files to the other's 3; the starting folder takes the tie

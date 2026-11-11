@@ -66,6 +66,11 @@ CREATE TABLE IF NOT EXISTS commit_reach (
   on_default INTEGER NOT NULL, pushed INTEGER, reachable INTEGER,
   PRIMARY KEY (repo_id, sha)
 );
+CREATE TABLE IF NOT EXISTS session_files (
+  session_id TEXT NOT NULL, path TEXT NOT NULL, edits INTEGER NOT NULL,
+  first_ts TEXT NOT NULL, last_ts TEXT NOT NULL,
+  PRIMARY KEY (session_id, path)
+);
 CREATE TABLE IF NOT EXISTS pr_status (
   repo TEXT NOT NULL, number INTEGER NOT NULL, state TEXT NOT NULL, merged_at TEXT, checked_at TEXT,
   PRIMARY KEY (repo, number)

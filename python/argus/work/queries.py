@@ -109,7 +109,7 @@ def _turn_rows(conn, ids: list[str], frm: str, to: str) -> list[sqlite3.Row]:
         [*ids, frm, to]).fetchall()
 
 
-_EVIDENCE_RANK = {"exact": 0, "coauthored": 1, "inferred": 2, None: 3}
+_EVIDENCE_RANK = {"exact": 0, "files": 1, "coauthored": 2, "inferred": 3, None: 4}
 
 
 def _max(a, b):
