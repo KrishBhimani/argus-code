@@ -145,11 +145,25 @@ def _commits(conn, rids: list[int], frm: str, to: str, scope: str) -> list[dict]
     return [r for r in rows if r["author_email"].lower() in mine or r["evidence"] == "exact"]
 
 
-def _tiles(conn, rids, ids, frm, to, scope) -> dict:
+def _last_own_commit(conn, rids: list[int], to: str) -> str | None:
+    """When the user's newest commit in the project was authored (same "mine" as `_commits`),
+    without reading the project's whole history into Python."""
+    mine = sorted(set().union(*(mine_emails(conn, rid) for rid in rids)))
+    row = conn.execute(
+        f"""SELECT MAX(c.authored_at) FROM commits c
+            WHERE c.repo_id IN ({_in(rids)}) AND c.authored_at < ?
+              AND (lower(c.author_email) IN ({_in(mine)}) OR EXISTS (
+                    SELECT 1 FROM session_commits sc
+                    WHERE sc.repo_id = c.repo_id AND sc.sha = c.sha AND sc.evidence = 'exact'))""",
+        [*rids, to, *mine]).fetchone()
+    return row[0]
+
+
+def _tiles(conn, rids, ids, frm, to, scope, commits: list[dict] | None = None) -> dict:
     spans = _active_rows(conn, ids, frm, to)
     active = sum(r["ms"] for r in spans)
     cost = sum(r["cost_usd"] for r in _turn_rows(conn, ids, frm, to))
-    commits = len(_commits(conn, rids, frm, to, scope))
+    commits = len(_commits(conn, rids, frm, to, scope) if commits is None else commits)
     return {"active_ms": active, "active_estimated": any(_estimated(r["kind"]) for r in spans),
             "cost": cost, "commits": commits,
             "cost_per_commit": (cost / commits) if commits else None}
@@ -200,6 +214,7 @@ def projects(conn: sqlite3.Connection, now_iso: str, tz: int = 0, days: int = 30
             d = _local_day(t["timestamp"], tz)
             if d in tokens[key]:
                 tokens[key][d] += t["output_tokens"] or 0
+    scan = _period_scan(conn, frm, to) if has_core else None
     out = []
     for key, folders in groups.items():
         rids = [f["id"] for f in folders]
@@ -214,11 +229,10 @@ def projects(conn: sqlite3.Connection, now_iso: str, tz: int = 0, days: int = 30
             b = conn.execute("SELECT git_branch FROM session_repo WHERE session_id = ?", (ended["id"],)).fetchone()
             latest = {"title": f["title"] if f and f["title"] else None, "branch": b["git_branch"] if b else None,
                       "session_id": ended["id"]}
-        mine_commits = _commits(conn, rids, "0000", to, "mine")
-        last_commit = mine_commits[-1]["authored_at"] if mine_commits else None
+        last_commit = _last_own_commit(conn, rids, to)
         outcomes = {"shipped": 0, "open": 0, "dropped": 0, "explored": 0}
         if has_core:
-            for s in _period_stories(conn, rids, frm, to):
+            for s in _period_stories(conn, rids, frm, to, scan):
                 b = _bucket(s["state"])
                 if b:
                     outcomes[b] += 1
@@ -232,7 +246,7 @@ def projects(conn: sqlite3.Connection, now_iso: str, tz: int = 0, days: int = 30
             "active_estimated": any(_estimated(s["kind"]) for s in spans),
             "tokens": sum(tokens[key].values()),
             "cost": cost[key],
-            "commits": sum(1 for c in mine_commits if frm <= c["authored_at"] < to),
+            "commits": len(_commits(conn, rids, frm, to, "mine")),
             "daily_tokens": list(tokens[key].values()),
             "last_worked_at": max(filter(None, [ended["ended_at"] if ended else None, last_commit]), default=None),
             "latest": latest,
@@ -249,9 +263,9 @@ def _repo_slug(conn, rids: list[int]) -> str | None:
     return key.split("/", 1)[1] if key and key.startswith("remote:") and "/" in key else None
 
 
-def _whole(conn, sid: str, frm: str, to: str) -> dict | None:
-    """The whole session's totals when the range shows only part of it, else None."""
-    s = conn.execute("SELECT started_at, ended_at FROM core.sessions WHERE id = ?", (sid,)).fetchone()
+def _whole(conn, sid: str, frm: str, to: str, s: sqlite3.Row | None) -> dict | None:
+    """The whole session's totals when the range shows only part of it, else None.
+    `s` is the session's archive row (its start and end), when it has one."""
     if s and s["started_at"] and s["ended_at"] and s["started_at"] >= frm and s["ended_at"] < to:
         return None
     # the session and its sub-agents (ids 'sid/...'), as a range scan the index can serve
@@ -262,11 +276,6 @@ def _whole(conn, sid: str, frm: str, to: str) -> dict | None:
     if w["a"] is None or (w["a"] >= frm and w["b"] < to):
         return None
     return {"first_ts": w["a"], "last_ts": w["b"], "output_tokens": w["o"] or 0, "cost": w["c"] or 0.0}
-
-
-def _model(conn, sid: str) -> str | None:
-    row = conn.execute("SELECT primary_model FROM core.sessions WHERE id = ?", (sid,)).fetchone()
-    return row["primary_model"] if row else None
 
 
 def _project_files(conn, rids: list[int], sids: list[str]) -> dict[str, frozenset[str]]:
@@ -286,12 +295,43 @@ def _project_files(conn, rids: list[int], sids: list[str]) -> dict[str, frozense
     return {sid: frozenset(v) for sid, v in out.items()}
 
 
-def _summaries(conn, rids, ids, frm, to, scope) -> list[SessionSummary]:
+class _Scan:
+    """The archive's turns in a range, read once and shared by every project of a request.
+    `core.turns` has no index on time, so each read is a pass over the whole table: asking
+    per project made the home page cost one pass per project (3 s on a real archive)."""
+
+    def __init__(self, conn, frm: str, to: str) -> None:
+        self.frm, self.to = frm, to
+        self.turns: dict[str, list[sqlite3.Row]] = {}     # top-level session -> its turns, sub-agents included
+        for t in conn.execute(
+                "SELECT session_id, timestamp, cost_usd, output_tokens FROM core.turns WHERE timestamp >= ? AND timestamp < ?",
+                (frm, to)):
+            self.turns.setdefault(t["session_id"].split("/", 1)[0], []).append(t)
+        skills: dict[str, set[str]] = {}
+        for r in conn.execute(
+                """SELECT t.session_id, ta.skill FROM turn_attribution ta JOIN core.turns t ON t.id = ta.turn_id
+                   WHERE ta.skill IS NOT NULL AND t.timestamp >= ? AND t.timestamp < ?""", (frm, to)):
+            skills.setdefault(r["session_id"].split("/", 1)[0], set()).add(r["skill"])
+        self.skills = {sid: sorted(v) for sid, v in skills.items()}
+
+
+def _by_session(conn, sql: str, sids: list[str], extra: tuple = ()) -> dict[str, list[sqlite3.Row]]:
+    """Rows of `sql` (which must select session_id and end in an IN list) keyed by session."""
+    out: dict[str, list[sqlite3.Row]] = {}
+    if sids:
+        for r in conn.execute(sql.format(ids=_in(sids)), [*extra, *sids]):
+            out.setdefault(r["session_id"], []).append(r)
+    return out
+
+
+def _summaries(conn, rids, ids, frm, to, scope, scan: _Scan | None = None,
+               commits: list[dict] | None = None) -> list[SessionSummary]:
+    """One summary per session with turns in the range. `scan` and `commits` are the range's
+    turns and commits when the caller already read them."""
     slug = _repo_slug(conn, rids)
-    turns = _turn_rows(conn, ids, frm, to)
-    by_sid: dict[str, list[sqlite3.Row]] = {}
-    for t in turns:
-        by_sid.setdefault(t["sid"], []).append(t)
+    if scan is None or (scan.frm, scan.to) != (frm, to):
+        scan = _Scan(conn, frm, to)
+    by_sid = {sid: scan.turns[sid] for sid in ids if sid in scan.turns}
     active: dict[str, int] = {}
     estimated: set[str] = set()
     for a in _active_rows(conn, list(by_sid), frm, to):
@@ -299,37 +339,35 @@ def _summaries(conn, rids, ids, frm, to, scope) -> list[SessionSummary]:
         if _estimated(a["kind"]):
             estimated.add(a["session_id"])
     commits_by_sid: dict[str, list[dict]] = {}
-    for c in _commits(conn, rids, frm, to, scope):
+    for c in (_commits(conn, rids, frm, to, scope) if commits is None else commits):
         if c["session_id"]:
             commits_by_sid.setdefault(c["session_id"], []).append(
                 {"sha": c["sha"], "subject": c["subject"], "evidence": c["evidence"],
                  "added": c["added"], "deleted": c["deleted"], "files": c["files"],
                  "on_default": c["on_default"], "pushed": c["pushed"], "reachable": c["reachable"],
                  "landed": c["landed"]})
-    # One grouped query: one per session scanned turns x attribution again for every session (3 s on a busy repo).
-    skills_by_sid: dict[str, list[str]] = {}
-    if by_sid:
-        for r in conn.execute(
-            f"""SELECT {_ROOT} AS sid, ta.skill FROM turn_attribution ta JOIN core.turns t ON t.id = ta.turn_id
-                WHERE ta.skill IS NOT NULL AND {_ROOT} IN ({_in(list(by_sid))}) AND t.timestamp >= ? AND t.timestamp < ?
-                GROUP BY sid, ta.skill""", [*by_sid, frm, to]):
-            skills_by_sid.setdefault(r["sid"], []).append(r["skill"])
-    files = _project_files(conn, rids, list(by_sid))
+    sids = list(by_sid)
+    files = _project_files(conn, rids, sids)
+    # One query per kind of fact, not per session: a busy project has hundreds of sessions.
+    titles = _by_session(conn, "SELECT session_id, title FROM session_facts WHERE session_id IN ({ids})", sids)
+    wheres = _by_session(conn, "SELECT session_id, git_branch, repo_id FROM session_repo WHERE session_id IN ({ids})", sids)
+    prs = _by_session(conn, """SELECT session_id, pr_number FROM session_prs WHERE pr_number IS NOT NULL
+                               AND (? IS NULL OR pr_repository IS NULL OR lower(pr_repository) = ?)
+                               AND session_id IN ({ids})""", sids, (slug, slug))
+    core = {r["id"]: r for r in conn.execute(
+        f"SELECT id, primary_model, started_at, ended_at FROM core.sessions WHERE id IN ({_in(sids)})", sids)} if sids else {}
     out = []
     for sid, ts in by_sid.items():
-        facts =conn.execute("SELECT title FROM session_facts WHERE session_id = ?", (sid,)).fetchone()
-        where = conn.execute("SELECT git_branch, repo_id FROM session_repo WHERE session_id = ?", (sid,)).fetchone()
-        branch = where["git_branch"]
-        skills = skills_by_sid.get(sid, [])
-        prs = [r["pr_number"] for r in conn.execute(
-            """SELECT pr_number FROM session_prs WHERE session_id = ? AND pr_number IS NOT NULL
-               AND (? IS NULL OR pr_repository IS NULL OR lower(pr_repository) = ?)""", (sid, slug, slug))]
+        title = titles[sid][0]["title"] if sid in titles else None
+        where = wheres[sid][0]
         stamps = sorted(t["timestamp"] for t in ts)
-        out.append(SessionSummary(sid, facts["title"] if facts else None, branch, stamps[0], stamps[-1],
-                                  active.get(sid, 0), sum(t["cost_usd"] for t in ts), len(ts), skills, prs,
+        out.append(SessionSummary(sid, title, where["git_branch"], stamps[0], stamps[-1],
+                                  active.get(sid, 0), sum(t["cost_usd"] for t in ts), len(ts), scan.skills.get(sid, []),
+                                  [r["pr_number"] for r in prs.get(sid, [])],
                                   commits_by_sid.get(sid, []), sid in estimated,
-                                  sum(t["output_tokens"] or 0 for t in ts), _whole(conn, sid, frm, to),
-                                  _model(conn, sid), repo_id=where["repo_id"], files=files.get(sid)))
+                                  sum(t["output_tokens"] or 0 for t in ts), _whole(conn, sid, frm, to, core.get(sid)),
+                                  core[sid]["primary_model"] if sid in core else None,
+                                  repo_id=where["repo_id"], files=files.get(sid)))
     return out
 
 
@@ -392,16 +430,22 @@ def _group(conn, rids: list[int], summaries: list[SessionSummary]) -> list[dict]
     return group_stories(summaries, gap, _default_branches(conn, rids))
 
 
-def _project_stories(conn, rids: list[int], frm: str, to: str, now_iso: str) -> list[dict]:
-    return _stateful(conn, _group(conn, rids, _summaries(conn, rids, _sessions(conn, rids), frm, to, "mine")), now_iso, rids)
+def _project_stories(conn, rids: list[int], frm: str, to: str, now_iso: str, scan: _Scan | None = None) -> list[dict]:
+    return _stateful(conn, _group(conn, rids, _summaries(conn, rids, _sessions(conn, rids), frm, to, "mine", scan)), now_iso, rids)
 
 
-def _period_stories(conn, rids: list[int], frm: str, now_iso: str) -> list[dict]:
+def _period_stories(conn, rids: list[int], frm: str, now_iso: str, scan: _Scan | None = None) -> list[dict]:
     """Threads active since `frm`, each read whole over at least the open lookback: a thread
     that committed before the period and went on inside it keeps its commits (and state).
     The home counts and each project's outcomes both come from here, so they agree."""
     lookback = _iso(_dt(now_iso) - timedelta(days=OPEN_LOOKBACK_DAYS))
-    return [s for s in _project_stories(conn, rids, min(frm, lookback), now_iso, now_iso) if s["last_ts"] >= frm]
+    return [s for s in _project_stories(conn, rids, min(frm, lookback), now_iso, now_iso, scan) if s["last_ts"] >= frm]
+
+
+def _period_scan(conn, frm: str, now_iso: str) -> _Scan:
+    """The one read of turns that every project's `_period_stories(…, frm, now_iso)` shares."""
+    lookback = _iso(_dt(now_iso) - timedelta(days=OPEN_LOOKBACK_DAYS))
+    return _Scan(conn, min(frm, lookback), now_iso)
 
 
 def _bucket(state: str) -> str | None:
@@ -417,10 +461,11 @@ def threads(conn: sqlite3.Connection, now_iso: str, tz: int = 0, days: int = 30)
     lookback = _iso(_dt(now_iso) - timedelta(days=OPEN_LOOKBACK_DAYS))
     frm = (_earliest(conn) or now_iso) if days == 0 else _iso(_dt(now_iso) - timedelta(days=days))
     out, counts = [], dict(empty["counts"])
+    scan = _period_scan(conn, min(frm, lookback), now_iso)
     for key, folders in _groups(conn).items():
         rids = [f["id"] for f in folders]
         name = _project_name(key, next((f for f in folders if f["present"]), folders[0]), len(folders))
-        for s in _period_stories(conn, rids, min(frm, lookback), now_iso):
+        for s in _period_stories(conn, rids, min(frm, lookback), now_iso, scan):
             b = _bucket(s["state"])
             if b and s["last_ts"] >= frm:
                 counts[b] += 1
@@ -441,7 +486,8 @@ def overview(conn: sqlite3.Connection, repo_id: int, frm: str, to: str, scope: s
     ids = _sessions(conn, rids)
     span = _dt(to) - _dt(frm)
     prior = _tiles(conn, rids, ids, _iso(_dt(frm) - span), frm, scope)
-    tiles = _tiles(conn, rids, ids, frm, to, scope)
+    commits = _commits(conn, rids, frm, to, scope)
+    tiles = _tiles(conn, rids, ids, frm, to, scope, commits)
     days = _days(frm, to, tz)
     active_d, commits_d = dict.fromkeys(days, 0), dict.fromkeys(days, 0)
     tokens_d, cost_d = dict.fromkeys(days, 0), dict.fromkeys(days, 0.0)
@@ -455,12 +501,11 @@ def overview(conn: sqlite3.Connection, repo_id: int, frm: str, to: str, scope: s
         if d in tokens_d:
             tokens_d[d] += t["output_tokens"] or 0
             cost_d[d] += t["cost_usd"] or 0
-    commits = _commits(conn, rids, frm, to, scope)
     for c in commits:
         d = _local_day(c["authored_at"], tz)
         if d in commits_d:
             commits_d[d] += 1
-    summaries = _summaries(conn, rids, ids, frm, to, scope)
+    summaries = _summaries(conn, rids, ids, frm, to, scope, commits=commits)
     branch_cost: dict[str, float] = {}
     for s in summaries:
         branch_cost[s.branch or "(no branch)"] = branch_cost.get(s.branch or "(no branch)", 0) + s.cost

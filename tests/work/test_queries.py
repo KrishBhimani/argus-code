@@ -420,3 +420,26 @@ def test_a_thread_that_edited_no_project_file_is_explored_not_dropped(tmp_path):
     o = queries.overview(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z", now_iso="2026-09-25T00:00:00Z")
     b = next(s for s in o["stories"] if s["title"] == "Fix B")
     assert (b["state"], b["reason"]) == ("dropped", "1 file edited, none committed · $2.00 spent")
+
+
+def test_the_home_page_reads_the_turns_once_however_many_projects_there_are(tmp_path):
+    """Regression: `core.turns` has no time index, so every read by time is a pass over the
+    table. The home page made two passes per project: 3 s on a real archive with 38 projects."""
+    conn = _world(tmp_path)
+    _git_facts(conn)
+    conn.execute("INSERT INTO repos (id, root, display_name, user_emails, default_ref) VALUES (2, '/q', 'other', '[]', 'refs/heads/main')")
+    conn.execute("UPDATE session_repo SET repo_id = 2 WHERE session_id = 'claude_code:B'")
+    now = "2026-09-25T00:00:00Z"
+
+    def passes(fn) -> int:
+        seen: list[str] = []
+        conn.set_trace_callback(seen.append)
+        try:
+            fn()
+        finally:
+            conn.set_trace_callback(None)
+        return sum("core.turns" in q and "timestamp >=" in q for q in seen)
+
+    assert passes(lambda: queries.threads(conn, now)) == 2            # the turns, and their skills: not per project
+    assert passes(lambda: queries.projects(conn, now_iso=now)) == 3   # plus the daily token series
+    assert len(queries.projects(conn, now_iso=now)) == 2

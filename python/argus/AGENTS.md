@@ -80,7 +80,12 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   *Explored* (`threads.py`): a thread with no commits whose sessions all have a record
   and edited no project file is `explored` (a question or review), never `dropped` or
   `uncommitted`; with edits and no commit the reason says how many files. Outcome
-  counts carry `explored` beside `shipped`/`open`/`dropped`. Columns added
+  counts carry `explored` beside `shipped`/`open`/`dropped`.
+  *Read cost* (`queries.py`): `core.turns` has no index on time, so a read by time is a
+  pass over the table. A request reads the range's turns and their skills once (`_Scan`)
+  and shares them across projects; per-session facts are fetched one query per kind,
+  never per session; `projects` asks SQL for the latest own commit instead of loading a
+  project's history. Guarded by a statement-count test. Columns added
   after the first trial build are added in `open_work_db` only when missing.
   Time comes from one source per session, best first: `measured` (transcript
   `turn_duration`), `estimated` (transcript gaps), `archive` (argus.db turn gaps, for
