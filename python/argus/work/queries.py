@@ -221,8 +221,6 @@ def projects(conn: sqlite3.Connection, now_iso: str, tz: int = 0, days: int = 30
                 b = _bucket(s["state"])
                 if b:
                     outcomes[b] += 1
-        in_period = [c for c in mine_commits if frm <= c["authored_at"] < to]
-        added = sum(c["added"] for c in in_period)
         out.append({
             "id": rids[0], "display_name": _project_name(key, r, len(folders)), "root": r["root"],
             "present": any(f["present"] for f in folders),
@@ -239,7 +237,6 @@ def projects(conn: sqlite3.Connection, now_iso: str, tz: int = 0, days: int = 30
             "latest": latest,
             "outcomes": outcomes,
             "cost_per_shipped": (cost[key] / outcomes["shipped"]) if outcomes["shipped"] else None,
-            "claude_share": (sum(c["added"] for c in in_period if c["agent_coauthored"]) / added) if added else None,
         })
     return sorted(out, key=lambda p: p["last_worked_at"] or "", reverse=True)
 

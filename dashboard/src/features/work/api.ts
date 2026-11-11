@@ -17,7 +17,7 @@ const Project = z.object({
   // A project is every folder holding one repo (clones, worktrees); any folder's id opens it.
   folder_ids: z.array(z.number()), folders: z.array(z.object({ id: z.number(), root: z.string(), present: z.boolean() })),
   // Threads in the period by outcome; per shipped = all spend ÷ shipped (null when none shipped).
-  outcomes: Outcomes, cost_per_shipped: z.number().nullable(), claude_share: z.number().nullable(),
+  outcomes: Outcomes, cost_per_shipped: z.number().nullable(),
 });
 export const WorkProjects = z.object({ projects: z.array(Project) });
 const Tiles = z.object({ active_ms: z.number(), active_estimated: z.boolean(), cost: z.number(), commits: z.number(), cost_per_commit: z.number().nullable() });

@@ -12,7 +12,6 @@ import { ThreadCard } from './ThreadCard';
 const isQuiet = (p: WorkProject) => p.tokens === 0 && p.commits === 0 && p.active_ms === 0;
 const SHOWN = 8;
 const plural = (n: number, w: string) => `${num(n)} ${w}${n === 1 ? '' : 's'}`;
-const pct = (v: number | null) => (v === null ? '—' : `${Math.round(v * 100)}%`);
 
 function OutcomeBar({ o }: { o: WorkProject['outcomes'] }) {
   const total = o.shipped + o.open + o.dropped || 1;
@@ -52,7 +51,7 @@ function ProjectCard({ p, onOpen }: { p: WorkProject; onOpen: () => void }) {
       <span className="grid grid-cols-3 gap-2 border-t border-line pt-2.5">
         <Stat label="SPENT" value={usd(p.cost)} />
         <Stat label="PER SHIPPED" value={p.cost_per_shipped === null ? '—' : usd(p.cost_per_shipped)} />
-        <Stat label="CLAUDE-WRITTEN" value={pct(p.claude_share)} />
+        <Stat label="YOUR COMMITS" value={num(p.commits)} />
       </span>
     </button>
   );

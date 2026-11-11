@@ -307,7 +307,6 @@ def test_projects_carry_outcomes(tmp_path):
     (p,) = queries.projects(conn, now_iso="2026-09-25T00:00:00Z")
     assert p["outcomes"] == {"shipped": 1, "open": 0, "dropped": 1}
     assert p["cost_per_shipped"] == 4.0          # all spend ($4) ÷ 1 shipped, dropped work included
-    assert p["claude_share"] == 0.0              # abc1234 is mine, not co-authored: a real 0, not "no data"
 
 
 def test_threads_without_the_archive_are_empty(tmp_path):
@@ -400,4 +399,4 @@ def test_mine_scope_leaves_out_a_teammates_agent_commits(tmp_path):
     assert queries.overview(conn, 1, frm, to)["tiles"]["commits"] == 1
     assert queries.overview(conn, 1, frm, to, scope="all")["tiles"]["commits"] == 3
     (p,) = queries.projects(conn, now_iso="2026-09-25T00:00:00Z")
-    assert p["commits"] == 1
+    assert p["commits"] == 1 and "claude_share" not in p
