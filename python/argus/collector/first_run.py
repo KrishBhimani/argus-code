@@ -19,6 +19,7 @@ from ..pricing.compute import compute_turn_cost
 from ..pricing.types import PricingTable
 from ..store.repository import Repository
 from .pipeline import ingest_file, recompute_stored_session
+from .session_files import files_by_session
 
 logger = logging.getLogger(__name__)
 
@@ -401,18 +402,19 @@ def _repair_fork_duplicates_once(
     """
     if repo.get_app_meta(FORK_DEDUP_REPAIR_KEY) == "1":
         return
-    file_by_basename: dict[str, tuple[Adapter, Path]] = {}
-    for a in adapters:
-        for f in a.discover_session_files():
-            file_by_basename[f.stem] = (a, f)
+    files = files_by_session(adapters)
     fixed = 0
     for sid in repo.top_level_sessions_sharing_messages():
-        match = file_by_basename.get(sid.split(":", 1)[-1])
-        if match is None:
+        matches = files.get(sid)
+        if not matches:
             continue
-        adapter, file = match
+        turns: list = []
+        calls: list = []
         try:
-            turns, calls = _parse_whole_file(adapter, file)
+            for adapter, file in matches:
+                t, c = _parse_whole_file(adapter, file)
+                turns.extend(t)
+                calls.extend(c)
         except OSError:
             continue
         agent = sid.split(":", 1)[0]
@@ -438,14 +440,14 @@ def _repair_fork_duplicates_once(
 
 
 def _stale_on_disk(
-    repo: Repository, key: str, file_by_basename: dict[str, tuple[Adapter, Path]]
+    repo: Repository, key: str, files: dict[str, list[tuple[Adapter, Path]]]
 ) -> list[str]:
     """Top-level sessions a pending sweep still has to re-read."""
     started_at = _sweep_started_at(repo, key)
     return [
         c["id"]
         for c in repo.top_level_sessions_computed_before(started_at)
-        if c["id"].split(":", 1)[-1] in file_by_basename
+        if c["id"] in files
     ]
 
 
@@ -490,11 +492,8 @@ def _backfill_missing_derived_data(
     if agent_fix_pending:
         for c in repo.sessions_with_untyped_agent_calls(BACKFILL_CAP):
             ids.add(c["id"].split("/", 1)[0])
-    # session_id "claude_code:<basename>" → file path lookup.
-    file_by_basename: dict[str, tuple[Adapter, Path]] = {}
-    for a in adapters:
-        for f in a.discover_session_files():
-            file_by_basename[f.stem] = (a, f)
+    # session_id "<agent>:<native id>" -> file paths lookup.
+    files = files_by_session(adapters)
 
     # One-shot "re-read every session still on disk" sweeps. Nothing in the
     # DB distinguishes a pre-fix row (placeholder output_tokens from a
@@ -504,12 +503,12 @@ def _backfill_missing_derived_data(
     # corrected and must not block completion.
     pending_sweeps = [k for k in _REREAD_ALL_SWEEPS if repo.get_app_meta(k) != "1"]
     for key in pending_sweeps:
-        stale = _stale_on_disk(repo, key, file_by_basename)
+        stale = _stale_on_disk(repo, key, files)
         ids.update(stale)
         deep_reset.update(stale)
 
     candidates = sorted(ids)[:BACKFILL_CAP]
-    _reread(candidates, deep_reset, file_by_basename, repo, table, should_stop)
+    _reread(candidates, deep_reset, files, repo, table, should_stop)
     if should_stop():
         return  # interrupted: don't mark one-shot work done on a partial run
     if agent_fix_pending and len(candidates) < BACKFILL_CAP:
@@ -521,14 +520,14 @@ def _backfill_missing_derived_data(
     # attempted and would fail again, so it doesn't hold the flag hostage.
     attempted = set(candidates)
     for key in pending_sweeps:
-        if not set(_stale_on_disk(repo, key, file_by_basename)) - attempted:
+        if not set(_stale_on_disk(repo, key, files)) - attempted:
             repo.set_app_meta(key, "1")
 
 
 def _reread(
     candidates: list[str],
     deep_reset: set[str],
-    file_by_basename: dict[str, tuple[Adapter, Path]],
+    files: dict[str, list[tuple[Adapter, Path]]],
     repo: Repository,
     table: PricingTable,
     should_stop: Callable[[], bool] = lambda: False,
@@ -539,26 +538,23 @@ def _reread(
             return
         if "/" in id_:  # sub-agent rollup ids — walked via parents
             continue
-        colon = id_.find(":")
-        if colon < 0:
+        matches = files.get(id_)
+        if not matches:
             continue
-        native = id_[colon + 1 :]
-        match = file_by_basename.get(native)
-        if match is None:
-            continue
-        adapter, file = match
-        repo.set_file_offset(str(file), 0)
-        if id_ in deep_reset:
-            for sub in adapter.sub_session_files_for(file):
-                repo.set_file_offset(str(sub), 0)
-        try:
-            ingest_file(adapter, file, repo, table)
-        except Exception as e:  # noqa: BLE001
-            repo.record_parse_error(
-                {
-                    "file": str(file),
-                    "byte_offset": -1,
-                    "reason": f"[backfill-tools] {e}",
-                    "raw_line_truncated": "",
-                }
-            )
+        for adapter, file in matches:
+            repo.set_file_offset(str(file), 0)
+            if id_ in deep_reset:
+                for sub in adapter.sub_session_files_for(file):
+                    repo.set_file_offset(str(sub), 0)
+        for adapter, file in matches:
+            try:
+                ingest_file(adapter, file, repo, table)
+            except Exception as e:  # noqa: BLE001
+                repo.record_parse_error(
+                    {
+                        "file": str(file),
+                        "byte_offset": -1,
+                        "reason": f"[backfill-tools] {e}",
+                        "raw_line_truncated": "",
+                    }
+                )

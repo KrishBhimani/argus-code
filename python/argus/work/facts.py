@@ -32,9 +32,11 @@ def _int(v) -> int | None:
         return None
 
 
-def read_new_lines(conn: sqlite3.Connection, path: Path) -> list[dict]:
-    """Complete JSON lines past this file's stored offset (bytes, so bad UTF-8 can't drift it)."""
-    row = conn.execute("SELECT byte_offset FROM file_offsets WHERE path = ?", (str(path),)).fetchone()
+def read_new_lines(conn: sqlite3.Connection, path: Path, key: str | None = None) -> list[dict]:
+    """Complete JSON lines past this file's stored offset (bytes, so bad UTF-8 can't drift it).
+    `key` names the stored offset: each pass over the transcripts keeps its own place."""
+    key = key or str(path)
+    row = conn.execute("SELECT byte_offset FROM file_offsets WHERE path = ?", (key,)).fetchone()
     start = row["byte_offset"] if row else 0
     with open(path, "rb") as fh:
         fh.seek(0, 2)
@@ -57,7 +59,7 @@ def read_new_lines(conn: sqlite3.Connection, path: Path) -> list[dict]:
         if isinstance(obj, dict):
             out.append(obj)
     conn.execute("INSERT OR REPLACE INTO file_offsets (path, byte_offset) VALUES (?, ?)",
-                 (str(path), start + end + 1))
+                 (key, start + end + 1))
     return out
 
 

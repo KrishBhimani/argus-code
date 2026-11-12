@@ -13,3 +13,10 @@ it('filters by text, model, window and errors', () => {
   expect(applyFilters(s, { q: '', project: null, model: null, window: '7d', hasErrors: false }, {}, today).map((x) => x.id)).toEqual(['1']);
   expect(applyFilters(s, { q: '', project: null, model: null, window: 'all', hasErrors: true }, { '2': 3 }, today).map((x) => x.id)).toEqual(['2']);
 });
+
+it('filters by agent when set and ignores it when absent', () => {
+  const both = [mk({ id: 'claude_code:a' }), mk({ id: 'codex:b', agent: 'codex' })];
+  const base = { q: '', project: null, model: null, window: 'all' as const, hasErrors: false };
+  expect(applyFilters(both, { ...base, agent: 'codex' }, {}, today).map((x) => x.id)).toEqual(['codex:b']);
+  expect(applyFilters(both, base, {}, today)).toHaveLength(2);
+});

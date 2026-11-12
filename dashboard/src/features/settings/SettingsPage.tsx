@@ -4,6 +4,8 @@ import { Panel } from '@/components/ui/Panel';
 import { Button } from '@/components/ui/Button';
 import { Pill } from '@/components/ui/Pill';
 import { api } from '@/lib/api/client';
+import { useWorkStatus } from '@/features/work/api';
+import { GithubPanel } from '@/features/work/GithubPanel';
 import { useIngestStatus, useParseErrors, usePricing, useSearchIndexStatus } from '@/lib/api/hooks';
 import { num } from '@/lib/format/format';
 
@@ -20,6 +22,7 @@ export default function SettingsPage() {
   const disable = useMutation({ mutationFn: api.searchIndexDisable, onSuccess: inv });
   const clear = useMutation({ mutationFn: api.searchIndexClear, onSuccess: inv });
   const d = idx.data;
+  const workOn = useWorkStatus().enabled;
   const ing = ingest.data;
   return (
     <>
@@ -29,7 +32,7 @@ export default function SettingsPage() {
           <div className="flex flex-col gap-3">
             <Panel title="Search indexing" sub={d ? (d.enabled ? 'on' : 'off') : ''}>
               <p className="text-xs text-ink-1 m-0 mb-3">
-                Indexes Claude's replies, thinking and tool output into a local FTS5 table so Transcripts search covers more than your prompts. Stored in <Mono>~/.argus/argus.db</Mono>; nothing leaves the machine.
+                Indexes agent replies, thinking and tool output into a local FTS5 table so Transcripts search covers more than your prompts. Stored in <Mono>~/.argus/argus.db</Mono>; nothing leaves the machine.
               </p>
               {d && (
                 <div className="text-xs font-mono text-ink-1 flex flex-col gap-1 mb-3">
@@ -46,9 +49,10 @@ export default function SettingsPage() {
             </Panel>
             <Panel title="Pricing">
               <p className="text-xs text-ink-1 m-0">
-                Costs are estimated from pricing table <Mono>{pricing.data?.version ?? '—'}</Mono>. Tokens are exact. Run <Mono>argus pricing refresh</Mono> to update (the only network call Argus ever makes, and only when you ask).
+                Costs are estimated from pricing table <Mono>{pricing.data?.version ?? '—'}</Mono>. Tokens are exact. Run <Mono>argus pricing refresh</Mono> to update (a network call made only when you ask; the Work trial's opt-in GitHub PR status is the only other one).
               </p>
             </Panel>
+            {workOn && <GithubPanel />}
             <Panel title="Export data">
               <div className="flex gap-2">
                 <a href="/api/export.json" download><Button>Download JSON</Button></a>

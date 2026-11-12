@@ -5,7 +5,7 @@ Parent: repo-root `AGENTS.md`. The statically-built UI served by `server/`.
 ## Purpose
 
 Vite + React 19 + TypeScript single-page app: TanStack Router (file routes in
-`src/routes/`), TanStack Query (API cache, 4 s polling for status/alerts),
+`src/routes/`), TanStack Query (API cache; ingest status polls at 4-10 s, both alert lists at 10 s),
 TanStack Table + Virtual (Sessions grid), uPlot for time series/scatter and
 hand-rolled SVG for bars/meters/heatmaps/minimap, Tailwind v4 with the design
 tokens in `src/styles.css` (`@theme`). Pages live in `src/features/<page>/`,
@@ -35,11 +35,17 @@ analyses in `src/lib/analysis/`.
   unless `argus start --work`). Its API client lives in `features/work/api.ts`, not
   `lib/api`, so the trial stays removable in one folder. A project can span several
   folders (`folder_ids`, `folders`): find a project by `folder_ids.includes(id)` so
-  old per-folder links still open it. A project has two tabs, Overview and Activity
-  (`?tab=timeline` from before the redesign maps to Activity);
-  `/projects/$repo?tab=activity&focus=<ids>` scrolls to and highlights those sessions.
+  old per-folder links still open it. The home leads with open threads
+  (`useWorkThreads`, `ThreadCard`) above project outcome cards. A project has two tabs,
+  Threads (Open / Shipped / Dropped columns, daily chart folded below) and Activity;
+  old `?tab=overview` maps to Threads and `?tab=timeline` to Activity.
+  `?tab=threads&focus=<thread key>` opens and highlights that thread;
+  `?tab=activity&focus=<ids>` scrolls to and highlights those sessions. Thread state
+  badges come from `fmt.ts` `STATE` and always carry text, never colour alone.
+  Settings shows the GitHub PR status panel (`features/work/GithubPanel.tsx`) only when
+  the trial is on; it calls the same `/api/work/github*` as `argus work github …`.
   Commit evidence is shown in plain words via `fmt.ts` `EVIDENCE` (exact → made here,
-  coauthored → Claude co-author, inferred → likely); keep that mapping in one place.
+  files → edited here, coauthored → Claude co-author, inferred → likely). The Threads tab's third column is "Not shipped": dropped and explored fold separately; keep that mapping in one place.
 - **SPA routing.** Deep links (`/sessions/<id>`) are served by the `index.html`
   fallback in `python/argus/server/app.py`; legacy `/session?id=` and `/prompts`
   URLs redirect client-side (`src/routes/session.tsx`, `src/routes/prompts.tsx`).
@@ -69,6 +75,10 @@ analyses in `src/lib/analysis/`.
   maps use the same keys. "vs prior window" deltas come from the server's
   `prior_window` — don't re-derive them from per-day maps. Tests that depend on
   the timezone pin `TZ` (see `src/lib/api/timezone.test.ts`, IST near midnight).
+- **Don't join two independently cached queries for one view.** If a value can
+  be derived from a response the page already renders (e.g. unseen alerts =
+  `seen_at == null` on `/api/alerts`), derive it; queries on different refresh
+  schedules drift apart and show stale or missing rows (issue #58).
 - **Derived analyses are pure and unit-tested** (`src/lib/analysis/`, plus
   `features/tools/toolsOverTime.ts`). Each function that would scale better as a
   server aggregate carries a `// candidate-endpoint:` comment — that list seeds

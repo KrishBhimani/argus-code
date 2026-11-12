@@ -13,6 +13,14 @@ from argus.collector.first_run import join_first_run_threads
 from argus.collector.search_backfill import join_search_backfill_threads
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_codex_home(tmp_path_factory, monkeypatch):
+    """Never let a test see the developer's real ~/.codex: point CODEX_HOME at
+    a directory that doesn't exist, which makes the Codex adapter absent.
+    Codex tests pass an explicit root instead."""
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path_factory.getbasetemp() / "no-codex-home"))
+
+
 # ─── Fixtures ─────────────────────────────────────────────────────────
 
 

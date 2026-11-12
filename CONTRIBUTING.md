@@ -139,10 +139,13 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the data-model rationale.
 The `Adapter` protocol in `python/argus/adapters/base.py` is what the
 pipeline, watcher, and server depend on. Per-adapter packages
 self-register via `@register` in their `adapter.py`. If you're adding
-a new adapter (Codex, OpenClaw, Hermes, …), do not edit shared code
+a new adapter (OpenClaw, Hermes, …), do not edit shared code
 to special-case it — express the per-agent behavior through the
 optional extension points (`extra_watch_paths`, `ingest_extra`,
-`sub_session_files_for`, `should_skip`, `normalize_model_name`).
+`sub_session_files_for`, `should_skip`, `native_session_id`,
+`normalize_model_name`). Define every one of them on your class, even as
+no-ops: the collector calls them directly and Protocol bodies aren't
+inherited. `adapters/codex/` is the second worked example.
 
 ### Detectors and the alert scheduler
 

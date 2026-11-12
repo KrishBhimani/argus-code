@@ -10,7 +10,7 @@ from argus.work.db import get_meta, open_work_db, set_meta
 
 TABLES = {"meta", "repos", "commits", "commit_files", "session_repo", "session_facts",
           "active_spans", "session_prs", "turn_attribution", "commit_claims",
-          "session_commits", "file_offsets"}
+          "session_commits", "file_offsets", "commit_reach", "pr_status"}
 
 
 def _snapshot(path):
@@ -69,4 +69,52 @@ def test_an_existing_work_db_gains_project_key_without_losing_rows(tmp_path):
     open_work_db(tmp_path).close()
     conn = open_work_db(tmp_path)   # twice: adding the column is idempotent
     assert tuple(conn.execute("SELECT root, project_key FROM repos").fetchone()) == ("/r", None)
+    conn.close()
+
+
+NEW_REPO_COLUMNS = ("default_ref", "has_remote", "reach_tips", "dirty", "dirty_checked_at", "remote_as_of")
+
+
+def test_an_existing_work_db_gains_git_state_without_losing_rows(tmp_path):
+    c = sqlite3.connect(tmp_path / "work.db")
+    c.execute("""CREATE TABLE repos (id INTEGER PRIMARY KEY AUTOINCREMENT, root TEXT NOT NULL UNIQUE,
+                 display_name TEXT NOT NULL, user_emails TEXT NOT NULL DEFAULT '[]', last_scanned_at TEXT,
+                 last_error TEXT, present INTEGER NOT NULL DEFAULT 1, ref_tips TEXT)""")
+    c.execute("INSERT INTO repos (root, display_name) VALUES ('/r', 'r')")
+    c.commit()
+    c.close()
+    open_work_db(tmp_path).close()
+    conn = open_work_db(tmp_path)   # twice: idempotent
+    row = conn.execute(f"SELECT root, {', '.join(NEW_REPO_COLUMNS)} FROM repos").fetchone()
+    assert tuple(row) == ("/r", None, None, None, None, None, None)
+    conn.execute("INSERT INTO commit_reach (repo_id, sha, on_default, pushed) VALUES (1, 'abc', 1, NULL)")
+    assert tuple(conn.execute("SELECT repo_id, sha, on_default, pushed FROM commit_reach").fetchone()) == (1, "abc", 1, None)
+    conn.close()
+
+
+def test_an_early_commit_reach_gains_reachable_without_losing_rows(tmp_path):
+    open_work_db(tmp_path).close()
+    c = sqlite3.connect(tmp_path / "work.db")
+    c.execute("DROP TABLE commit_reach")
+    c.execute("""CREATE TABLE commit_reach (repo_id INTEGER NOT NULL, sha TEXT NOT NULL,
+                 on_default INTEGER NOT NULL, pushed INTEGER, PRIMARY KEY (repo_id, sha))""")
+    c.execute("INSERT INTO commit_reach VALUES (1, 'abc', 1, 1)")
+    c.commit()
+    c.close()
+    conn = open_work_db(tmp_path)
+    assert tuple(conn.execute("SELECT sha, on_default, pushed, reachable FROM commit_reach").fetchone()) == ("abc", 1, 1, None)
+    conn.close()
+
+
+def test_pr_status_and_new_columns_arrive_on_an_existing_db(tmp_path):
+    open_work_db(tmp_path).close()
+    c = sqlite3.connect(tmp_path / "work.db")
+    c.execute("DROP TABLE IF EXISTS pr_status")
+    c.commit()
+    c.close()
+    conn = open_work_db(tmp_path)
+    conn.execute("INSERT INTO pr_status VALUES ('o/r', 7, 'MERGED', '2026-09-01T00:00:00Z', '2026-09-02T00:00:00Z')")
+    assert conn.execute("SELECT state FROM pr_status").fetchone()[0] == "MERGED"
+    assert "landed" in {r["name"] for r in conn.execute("SELECT name FROM pragma_table_info('commit_reach')")}
+    assert "merged_branches" in {r["name"] for r in conn.execute("SELECT name FROM pragma_table_info('repos')")}
     conn.close()

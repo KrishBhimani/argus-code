@@ -6,7 +6,7 @@ import { Pill } from '@/components/ui/Pill';
 import { Button } from '@/components/ui/Button';
 import { ErrorPanel } from '@/components/ui/ErrorPanel';
 import { AlertStrip } from '@/components/charts/AlertStrip';
-import { useAlerts, useMarkAlertSeen, useUnseenAlerts } from '@/lib/api/hooks';
+import { useAlerts, useMarkAlertSeen } from '@/lib/api/hooks';
 import type { Alert } from '@/lib/api/client';
 import { alertWhen } from '@/features/overview/AttentionStrip';
 
@@ -30,10 +30,11 @@ const subject = (a: Alert) => {
 
 export default function AlertsPage() {
   const all = useAlerts();
-  const unseen = useUnseenAlerts();
   const mark = useMarkAlertSeen();
   const [f, setF] = useState<Filter>('unseen');
-  const unseenIds = useMemo(() => new Set((unseen.data ?? []).map((a) => a.id)), [unseen.data]);
+  // Unseen is derived from the same response the rows render from, so the
+  // count, the filter and the card contents can never disagree (issue #58).
+  const unseenIds = useMemo(() => new Set((all.data ?? []).filter((a) => !a.seen_at).map((a) => a.id)), [all.data]);
   const sorted = useMemo(() => [...(all.data ?? [])].sort((x, y) => alertWhen(y).localeCompare(alertWhen(x))), [all.data]);
   const rows = f === 'all' ? sorted : f === 'unseen' ? sorted.filter((x) => unseenIds.has(x.id)) : sorted.filter((x) => x.severity === f);
   const last30 = sorted.filter((a) => Date.now() - new Date(alertWhen(a)).getTime() < 30 * 86_400_000);

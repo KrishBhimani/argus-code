@@ -7,7 +7,7 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
 
-from . import queries
+from . import github, queries
 from .db import get_meta, open_work_db
 
 TZ = Query(0, ge=-14 * 60, le=14 * 60)
@@ -51,11 +51,35 @@ def build_work_router(data_dir: Path) -> APIRouter:
     def projects(tz: int = TZ, days: int = DAYS) -> dict:
         return {"projects": queries.projects(conn, _iso(_now()), tz, days)}
 
+    # GitHub PR status (opt-in): the same functions as `argus work github enable|disable|refresh`.
+    @r.get("/github")
+    def github_status() -> dict:
+        return github.status(conn)
+
+    @r.post("/github/enable")
+    def github_enable() -> dict:
+        result = github.enable(conn, _iso(_now()))
+        return {**github.status(conn), "result": result}
+
+    @r.post("/github/disable")
+    def github_disable() -> dict:
+        github.disable(conn)
+        return github.status(conn)
+
+    @r.post("/github/refresh")
+    def github_refresh() -> dict:
+        result = github.refresh(conn, _iso(_now()))
+        return {**github.status(conn), "result": result}
+
+    @r.get("/threads")
+    def threads(tz: int = TZ, days: int = DAYS) -> dict:
+        return queries.threads(conn, _iso(_now()), tz, days)
+
     @r.get("/projects/{repo_id}/overview")
     def overview(repo_id: int, from_: str | None = Query(None, alias="from"), to: str | None = None,
                  scope: Literal["mine", "all"] = "mine", tz: int = TZ, days: int = DAYS) -> dict:
         _repo(repo_id)
-        return queries.overview(conn, repo_id, *_range(repo_id, from_, to, days), scope=scope, tz=tz)
+        return queries.overview(conn, repo_id, *_range(repo_id, from_, to, days), scope=scope, tz=tz, now_iso=_iso(_now()))
 
     @r.get("/projects/{repo_id}/timeline")
     def timeline(repo_id: int, from_: str | None = Query(None, alias="from"), to: str | None = None,

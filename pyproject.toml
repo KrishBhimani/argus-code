@@ -1,13 +1,13 @@
 [project]
 name = "argus-code"
-version = "0.5.2"
-description = "Local-first dashboard for Claude Code cost, token, tool-usage, and full-text search analytics"
+version = "0.7.1"
+description = "Local-first observability for Claude Code and OpenAI Codex: per-session forensics, cost, tokens, tool health, sub-agents, alerts and full-text search"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [{ name = "Krish Bhimani" }]
 keywords = [
-    "claude", "claude-code", "anthropic", "cli", "dashboard",
+    "claude", "claude-code", "anthropic", "codex", "openai", "cli", "dashboard",
     "analytics", "tokens", "cost", "usage", "llm", "ai-tools",
     "local-first",
 ]
@@ -61,6 +61,24 @@ packages = ["python/argus"]
 "dashboard-dist" = "argus/dashboard-dist"
 "pricing" = "argus/pricing"
 "templates" = "argus/templates"
+
+# The sdist is built from the working directory, and without an allow-list
+# Hatch packs every file .gitignore doesn't exclude -- other git worktrees
+# under .claude/, local agent/tool state, stray shortcuts. Ship only what's
+# needed to build (and test) the package.
+[tool.hatch.build.targets.sdist]
+only-include = [
+    "python",
+    "dashboard-dist",
+    "pricing",
+    "templates",
+    "tests",
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    "pyproject.toml",
+    "uv.lock",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

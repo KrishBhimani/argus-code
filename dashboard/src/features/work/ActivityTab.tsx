@@ -4,7 +4,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorPanel } from '@/components/ui/ErrorPanel';
 import { num, tok, usd } from '@/lib/format/format';
 import { useWorkTimeline, type Scope, type WorkTimelineT } from './api';
-import { EVIDENCE, hours } from './fmt';
+import { evidenceBadge, hours } from './fmt';
 import { periodLabel } from './PeriodChips';
 
 type Item = WorkTimelineT['days'][number]['items'][number];
@@ -55,7 +55,7 @@ function SessionCard({ s, focused }: { s: SessionItem; focused: boolean }) {
               <span className="font-mono text-ink-2">{c.sha.slice(0, 7)}</span>
               <span className="truncate">{c.subject}</span>
               <span className="font-mono text-[11px]"><span className="text-[#5fd3a6]">+{num(c.added)}</span> <span className="text-[#e5707a]">−{num(c.deleted)}</span></span>
-              <span className={`text-[10px] px-1.5 rounded-full ${EVIDENCE[c.evidence].className}`}>{EVIDENCE[c.evidence].label}</span>
+              <span className={`text-[10px] px-1.5 rounded-full ${evidenceBadge(c.evidence).className}`}>{evidenceBadge(c.evidence).label}</span>
             </div>
           ))}
           {s.commits.length > 6 && (

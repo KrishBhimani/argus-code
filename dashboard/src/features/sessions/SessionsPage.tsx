@@ -10,6 +10,7 @@ import { WINDOWS, type Window } from '@/lib/api/client';
 import { useSessions } from '@/lib/api/hooks';
 import { sessionTokens } from '@/lib/analysis/rollups';
 import { num, tok, usd } from '@/lib/format/format';
+import { agentLabel, agentOptions } from '@/lib/agents';
 import { applyFilters, errorCount, type Filters } from './filters';
 import { SessionsTable } from './SessionsTable';
 import { AnalysisStrip } from './AnalysisStrip';
@@ -20,12 +21,13 @@ const SEL = 'h-6 bg-bg-2 border border-line-2 rounded-md text-[11px] text-ink-1 
 export default function SessionsPage() {
   const q = useSessions();
   const all = useMemo(() => q.data ?? [], [q.data]);
-  const [f, setF] = useState<Filters>({ q: '', project: null, model: null, window: '30d', hasErrors: false });
+  const [f, setF] = useState<Filters>({ q: '', project: null, model: null, agent: null, window: '30d', hasErrors: false });
   const errorsById = useMemo(() => Object.fromEntries(all.map((s) => [s.id, errorCount(s) ?? 0])), [all]);
   const showErrors = all.some((s) => errorCount(s) != null);
   const rows = useMemo(() => applyFilters(all, f, errorsById, new Date()), [all, f, errorsById]);
   const projects = useMemo(() => [...new Set(all.map((s) => s.project_path))].sort(), [all]);
   const models = useMemo(() => [...new Set(all.map((s) => s.primary_model))].sort(), [all]);
+  const agents = useMemo(() => agentOptions(all), [all]);
   const nextWindow = (w: Window): Window => WINDOWS[(WINDOWS.indexOf(w) + 1) % WINDOWS.length];
   const tot = rows.reduce((a, s) => ({ t: a.t + sessionTokens(s), c: a.c + s.total_cost_usd }), { t: 0, c: 0 });
 
@@ -39,6 +41,12 @@ export default function SessionsPage() {
             <Icon name="search" size={13} />
             <input value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} placeholder="Filter by project or model" className="bg-transparent outline-none text-ink-0 text-xs w-full placeholder:text-ink-2" />
           </label>
+          {agents.length > 0 && (
+            <select value={f.agent ?? ''} onChange={(e) => setF({ ...f, agent: e.target.value || null })} className={SEL}>
+              <option value="">Agent: all</option>
+              {agents.map((a) => <option key={a} value={a}>{agentLabel(a)}</option>)}
+            </select>
+          )}
           <select value={f.project ?? ''} onChange={(e) => setF({ ...f, project: e.target.value || null })} className={SEL}>
             <option value="">Project: all</option>
             {projects.map((p) => <option key={p} value={p}>{p}</option>)}
@@ -54,7 +62,7 @@ export default function SessionsPage() {
         </div>
         {q.isLoading ? <Skeleton w="100%" h="200px" /> : <AnalysisStrip sessions={rows} />}
         <Panel padded={false} className="flex-1 min-h-[320px]">
-          <SessionsTable rows={rows} showErrors={showErrors} />
+          <SessionsTable rows={rows} showErrors={showErrors} showAgent={agents.length > 0} />
           <div className="flex items-center gap-3 px-3.5 py-2 border-t border-line text-[11px] text-ink-2 font-mono">
             <span>{num(rows.length)} of {num(all.length)}</span>
             <span className="ml-auto">rows ↑↓ · open ⏎ · token bar is relative to the largest session in view</span>

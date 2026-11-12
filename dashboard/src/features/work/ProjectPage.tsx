@@ -3,12 +3,12 @@ import { Link, useParams, useSearch } from '@tanstack/react-router';
 import { TopBar, Page } from '@/app/shell/TopBar';
 import { useWorkProjects, type WorkProject } from './api';
 import { shortPath } from './fmt';
-import OverviewTab from './OverviewTab';
+import ThreadsTab from './ThreadsTab';
 import ActivityTab from './ActivityTab';
 import { PeriodChips } from './PeriodChips';
 
-export type WorkTab = 'overview' | 'activity';
-const TABS: { id: WorkTab; label: string }[] = [{ id: 'overview', label: 'Overview' }, { id: 'activity', label: 'Activity' }];
+export type WorkTab = 'threads' | 'activity';
+const TABS: { id: WorkTab; label: string }[] = [{ id: 'threads', label: 'Threads' }, { id: 'activity', label: 'Activity' }];
 
 /** Where this project lives on disk: one line, short paths, the full path on hover. */
 function Folders({ project }: { project: WorkProject }) {
@@ -45,7 +45,7 @@ export default function ProjectPage() {
           ))}
           <div className="ml-auto pb-2"><PeriodChips days={days} onChange={setDays} /></div>
         </nav>
-        {tab === 'overview' && <OverviewTab key={days} repo={id} days={days} />}
+        {tab === 'threads' && <ThreadsTab key={days} repo={id} days={days} focus={focus} />}
         {tab === 'activity' && <ActivityTab repo={id} days={days} focus={focus} />}
       </Page>
     </>
