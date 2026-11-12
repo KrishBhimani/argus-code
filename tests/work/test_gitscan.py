@@ -417,3 +417,33 @@ def test_old_session_commits_are_not_tried_for_a_squash(tmp_path, monkeypatch):
     monkeypatch.setattr(gitscan, "squash_landed", lambda root, ref, commits: tried.append(set(commits)) or set())
     gitscan.refresh_git_state(conn, rid, root, "2027-06-01T00:00:00Z")      # far past the lookback
     assert tried == []
+
+
+def test_stash_entries_are_not_commits(tmp_path):
+    """Seen on real data: "On main: ..." and "index on main: ..." stash entries were stored as
+    commits and showed as "2 commits not pushed" on a thread that had committed nothing."""
+    repo = make_repo(tmp_path / "proj")
+    (repo / "a.py").write_text("print('wip')\n")
+    git(repo, "stash", "push", "-q", "-m", "parked", date="2026-09-02T09:25:00Z")
+    conn = open_work_db(tmp_path / "data")
+    root = gitscan.repo_root(str(repo))
+    rid = gitscan.ensure_repo(conn, root)
+    assert gitscan.scan_repo(conn, rid, root, "2026-09-05T00:00:00Z") == 3
+    subjects = {r["subject"] for r in conn.execute("SELECT subject FROM commits")}
+    assert subjects == {"feat: first", "fix: second", "chore: teammate"}
+    stash = git(repo, "rev-parse", "refs/stash").strip()
+    assert stash not in gitscan._ref_tips(root)       # a new stash is not new history to read
+
+
+def test_a_stash_stored_by_an_older_scan_stops_counting(tmp_path):
+    repo = make_repo(tmp_path / "proj")
+    (repo / "a.py").write_text("print('wip')\n")
+    git(repo, "stash", "push", "-q", "-m", "parked", date="2026-09-02T09:25:00Z")
+    conn = open_work_db(tmp_path / "data")
+    root = gitscan.repo_root(str(repo))
+    rid = gitscan.ensure_repo(conn, root)
+    gitscan.scan_repo(conn, rid, root, "2026-09-05T00:00:00Z")
+    stash = git(repo, "rev-parse", "refs/stash").strip()
+    conn.execute("INSERT INTO commits VALUES (?, ?, 'Me', 'me@example.com', '2026-09-02T09:25:00Z', '2026-09-02T09:25:00Z', 'On main: parked', 2, 0, 1, 0, 1)", (rid, stash))
+    gitscan.refresh_git_state(conn, rid, root, "2026-09-05T00:00:00Z")
+    assert conn.execute("SELECT reachable FROM commit_reach WHERE sha = ?", (stash,)).fetchone()[0] == 0

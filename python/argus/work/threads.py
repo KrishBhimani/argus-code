@@ -66,12 +66,12 @@ def thread_state(story: dict, folder: dict, now_iso: str, *, newest_in_folder: b
         # None = no file-edit record for the thread: the older rules below still apply.
         edited = story.get("files_edited")
         if edited == 0:   # it asked, read or reviewed: nothing to ship, nothing abandoned
-            return "explored", f"no files edited · ${story['cost']:.2f} spent"
+            return "explored", "no project files edited"
         if newest_in_folder and (folder.get("dirty") or 0) > 0 and idle <= DROP_DAYS:
             return "uncommitted", f"folder has {_n(folder['dirty'], 'changed file')}"
         if edited:
-            return "dropped", f"{_n(edited, 'file')} edited, none committed · ${story['cost']:.2f} spent"
-        return "dropped", f"no commit · ${story['cost']:.2f} spent"
+            return "dropped", f"{_n(edited, 'file')} edited, none committed"
+        return "dropped", "no commit"   # what it cost is the row's to show, not the reason's
     if idle > DROP_DAYS:
         return "dropped", f"quiet for {int(idle)} days, not on {base}"
     if idle >= STALL_DAYS:

@@ -22,6 +22,10 @@ LOG_FORMAT = (
 AGENT_TRAILER = re.compile(r"claude|noreply@anthropic\.com", re.IGNORECASE)
 FALLBACK_DAYS = 180
 SQUASH_LOOKBACK_DAYS = 90   # session commits older than this aren't tried for a squash
+STASH_REF = "refs/stash"
+# Every ref but the stash: `git stash` writes commit objects ("On main: ...", "index on main: ...")
+# that are parked changes, not work that was committed.
+ALL_REFS = [f"--exclude={STASH_REF}", "--all"]
 
 
 class GitError(RuntimeError):
@@ -167,9 +171,10 @@ def _store(conn: sqlite3.Connection, repo_id: int, commits: list[CommitRec]) -> 
 
 
 def _ref_tips(root: str) -> list[str]:
-    """Every ref's commit plus HEAD: what a repo's history is reachable from."""
-    out = run_git(["for-each-ref", "--format=%(objectname)"], root, timeout=15)
-    tips = {line.strip() for line in out.splitlines() if line.strip()}
+    """Every ref's commit plus HEAD: what a repo's history is reachable from.
+    The stash is left out: its entries are parked changes, not commits."""
+    out = run_git(["for-each-ref", "--format=%(objectname) %(refname)"], root, timeout=15)
+    tips = {line.split()[0] for line in out.splitlines() if line.strip() and line.split()[-1] != STASH_REF}
     try:
         tips.add(run_git(["rev-parse", "HEAD"], root, timeout=15).strip())
     except GitError:  # empty repo, no HEAD yet
@@ -179,7 +184,7 @@ def _ref_tips(root: str) -> list[str]:
 
 def scan_repo(conn: sqlite3.Connection, repo_id: int, root: str, now_iso: str) -> int:
     row = conn.execute("SELECT last_scanned_at, ref_tips, project_key FROM repos WHERE id = ?", (repo_id,)).fetchone()
-    base = ["log", "--all", "--no-color", "--no-renames", "--numstat", f"--format={LOG_FORMAT}"]
+    base = ["log", *ALL_REFS, "--no-color", "--no-renames", "--numstat", f"--format={LOG_FORMAT}"]
     error = None
     tips = _ref_tips(root)
     old = json.loads(row["ref_tips"]) if row["ref_tips"] else None
@@ -327,7 +332,7 @@ def refresh_git_state(conn: sqlite3.Connection, repo_id: int, root: str, now_iso
         on_default = set(run_git(["rev-list", ref], root).split()) if ref else set()
         pushed = set(run_git(["rev-list", "--remotes"], root).split()) if remote else None
         # An amended or rebased commit stays in `commits` but no ref reaches it any more.
-        reachable = set(run_git(["rev-list", "--all"], root).split())
+        reachable = set(run_git(["rev-list", *ALL_REFS], root).split())
         # A squash merge or a fast-forwarded release branch leaves the session's commits off main:
         # match them by content, and note which remote branches main already contains.
         since = _utc((datetime.fromisoformat(now_iso.replace("Z", "+00:00"))

@@ -18,8 +18,8 @@ const base = {
         first_ts: '2026-09-28T09:00:00Z', last_ts: '2026-09-28T10:00:00Z', active_ms: 600_000, active_estimated: false }] }),
     story({ key: 'claude_code:ship1', title: 'grokbot integration' }),
     story({ key: 'claude_code:ship2', title: 'composio async fix' }),
-    story({ key: 'claude_code:drop', title: 'fastapi import error', state: 'dropped', reason: 'no commit · $0.44 spent', cost: 0.44 }),
-    story({ key: 'claude_code:ask', title: 'how does the watcher work', state: 'explored', reason: 'no files edited · $0.30 spent', cost: 0.3 }),
+    story({ key: 'claude_code:drop', title: 'fastapi import error', state: 'dropped', reason: 'no commit', cost: 0.44 }),
+    story({ key: 'claude_code:ask', title: 'how does the watcher work', state: 'explored', reason: 'no project files edited', cost: 0.3 }),
   ],
   breakdowns: { branches: [], skills: [], files: [] },
 };
@@ -87,7 +87,7 @@ it('keeps questions and reviews apart from dropped work', () => {
   expect(col.queryByText('how does the watcher work')).toBeNull();
   fireEvent.click(col.getByRole('button', { name: /1 explored/ }));
   expect(col.getByText('how does the watcher work')).toBeInTheDocument();
-  expect(col.getByText(/no files edited · \$0\.30 spent/)).toBeInTheDocument();
+  expect(col.getByText(/no project files edited · \$0\.30/)).toBeInTheDocument();   // the reason, then the cost, once
   expect(col.queryByText('fastapi import error')).toBeNull();          // dropped stays folded on its own
   expect(within(screen.getByRole('group', { name: 'Outcomes' })).getByText('Explored')).toBeInTheDocument();
 });

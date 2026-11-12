@@ -70,7 +70,14 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   *`files` evidence* (`linker.py`, above the two timing levels): a commit the user
   authored that changes a file the session edited before it, at most `FILES_WINDOW_MS`
   (7 days) earlier, with no other commit having changed that file in between; more
-  shared files wins, then the nearer edit.
+  shared files wins, then the nearer edit. *Timing and read-only sessions:* a session
+  read for edits that used no edit tool at all gets no `inferred` link, except to a
+  reachable merge commit (a merge needs no edit); `coauthored` still links, since the
+  commit itself names an agent. A session whose edits fall outside every known repo
+  is not read-only: shell or unmapped changes are plausible there.
+  *Stash:* `refs/stash` is left out of the scan, the ref tips and reachability
+  (`gitscan.ALL_REFS`): stash entries are commit objects but not commits. One stored
+  by an older scan becomes `reachable = 0` and stops counting.
   *Thread grouping* (`stories.group_stories`): a session joins the thread, active within
   the gap, with which it shares project files (at least `SHARE` = 25% of the smaller
   side; paths are repo-relative, so worktrees agree), the most shared winning. A branch
@@ -79,7 +86,8 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   a record (`files is None`, not in `edits_seen`) falls back to "same branch".
   *Explored* (`threads.py`): a thread with no commits whose sessions all have a record
   and edited no project file is `explored` (a question or review), never `dropped` or
-  `uncommitted`; with edits and no commit the reason says how many files. Outcome
+  `uncommitted`; with edits and no commit the reason says how many files. A reason
+  says why, never what it cost: the row shows the cost. Outcome
   counts carry `explored` beside `shipped`/`open`/`dropped`.
   *Read cost* (`queries.py`): `core.turns` has no index on time, so a read by time is a
   pass over the table. A request reads the range's turns and their skills once (`_Scan`)

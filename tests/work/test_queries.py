@@ -419,7 +419,7 @@ def test_a_thread_that_edited_no_project_file_is_explored_not_dropped(tmp_path):
     conn.execute("INSERT INTO session_files VALUES ('claude_code:B', '/r/src/b.py', 2, '2026-09-20T22:30:00Z', '2026-09-20T22:30:00Z')")
     o = queries.overview(conn, 1, "2026-09-01T00:00:00Z", "2026-09-25T00:00:00Z", now_iso="2026-09-25T00:00:00Z")
     b = next(s for s in o["stories"] if s["title"] == "Fix B")
-    assert (b["state"], b["reason"]) == ("dropped", "1 file edited, none committed · $2.00 spent")
+    assert (b["state"], b["reason"]) == ("dropped", "1 file edited, none committed")
 
 
 def test_the_home_page_reads_the_turns_once_however_many_projects_there_are(tmp_path):

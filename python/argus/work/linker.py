@@ -58,7 +58,7 @@ def link_repo(conn: sqlite3.Connection, repo_id: int) -> dict[str, int]:
     sessions = [r["session_id"] for r in conn.execute("SELECT session_id FROM session_repo WHERE repo_id = ?", (repo_id,))]
     times = {s: _turn_times(conn, s) for s in sessions}
     mine = mine_emails(conn, repo_id)
-    commits = conn.execute("SELECT sha, author_email, authored_at, agent_coauthored FROM commits WHERE repo_id = ? ORDER BY authored_at",
+    commits = conn.execute("SELECT sha, author_email, authored_at, agent_coauthored, parents FROM commits WHERE repo_id = ? ORDER BY authored_at",
                            (repo_id,)).fetchall()
     best: dict[str, tuple[int, int, float, str, str]] = {}  # sha -> (rank, -shared files, gap, session, evidence)
 
@@ -73,6 +73,14 @@ def link_repo(conn: sqlite3.Connection, repo_id: int) -> dict[str, int]:
                                   (repo_id, claim["short_sha"] + "%")):
                 offer(c["sha"], sid, "exact", 0.0)
     edits = _edits_by_file(conn, repo_id, sessions)
+    # Sessions read for edits that used no edit tool at all: they asked, read or reviewed.
+    # The user committing something within 30 minutes of one is a coincidence, not its work.
+    read_only = {r["session_id"] for r in conn.execute(
+        """SELECT session_id FROM edits_seen e
+           WHERE NOT EXISTS (SELECT 1 FROM session_files f WHERE f.session_id = e.session_id)""")} & set(sessions)
+    # Commits no ref reaches any more (as of the last scan): a stash entry an older scan stored
+    # has two parents like a merge, and must not pass for one.
+    gone = {r["sha"] for r in conn.execute("SELECT sha FROM commit_reach WHERE repo_id = ? AND reachable = 0", (repo_id,))}
     changed: dict[str, list[str]] = {}
     if edits:
         for f in conn.execute("SELECT sha, path FROM commit_files WHERE repo_id = ?", (repo_id,)):
@@ -98,8 +106,12 @@ def link_repo(conn: sqlite3.Connection, repo_id: int) -> dict[str, int]:
                 offer(c["sha"], sid, "files", nearest[sid], n)
             for sid in sessions:
                 gap = _gap_after_turn(times[sid], t)
-                if gap is not None:
-                    offer(c["sha"], sid, "coauthored" if c["agent_coauthored"] else "inferred", gap)
+                if gap is None:
+                    continue
+                if c["agent_coauthored"]:   # the commit itself says an agent made it
+                    offer(c["sha"], sid, "coauthored", gap)
+                elif sid not in read_only or (c["parents"] > 1 and c["sha"] not in gone):   # a merge needs no edit
+                    offer(c["sha"], sid, "inferred", gap)
         for p in paths:
             last_commit_of[p] = t
     conn.execute("BEGIN")

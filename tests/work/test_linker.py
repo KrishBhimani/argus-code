@@ -155,3 +155,32 @@ def test_a_claimed_commit_stays_exact(tmp_path):
     conn.execute("INSERT INTO commit_claims VALUES ('claude_code:A', 'ggggggg', NULL)")
     link_repo(conn, 1)
     assert _links(conn) == {"ggggggg777": ("claude_code:A", "exact")}
+
+
+def test_a_session_that_edited_nothing_gets_no_commit_by_the_clock(tmp_path):
+    """Seen on real data: a $0.56 "summarise this PR" session read as shipped, because the
+    user committed two unrelated changes within 30 minutes of it."""
+    _core(tmp_path, {"claude_code:A": ["2026-09-01T10:00:00Z"], "claude_code:B": ["2026-09-02T10:00:00Z"],
+                     "claude_code:C": ["2026-09-03T10:00:00Z"], "claude_code:D": ["2026-09-04T10:00:00Z"]})
+    conn = open_work_db(tmp_path)
+    _repo(conn)
+    conn.executemany("INSERT INTO session_repo VALUES (?, 1, '/r', 'main')",
+                     [("claude_code:A",), ("claude_code:B",), ("claude_code:C",), ("claude_code:D",)])
+    # A: read for edits, made none.  B: no record at all.  C: edited, but outside this repo.  D: like A.
+    conn.executemany("INSERT INTO edits_seen VALUES (?)", [("claude_code:A",), ("claude_code:C",), ("claude_code:D",)])
+    _edited(conn, "claude_code:C", "/elsewhere/notes.md", "2026-09-03T10:00:00Z")
+    _commit(conn, "aaaaaaa111", "2026-09-01T10:05:00Z")            # by me, 5 min after A's turn
+    _commit(conn, "bbbbbbb222", "2026-09-02T10:05:00Z")
+    _commit(conn, "ccccccc333", "2026-09-03T10:05:00Z")
+    _commit(conn, "ddddddd444", "2026-09-04T10:05:00Z", agent=1)   # the commit itself names an agent
+    conn.execute("INSERT INTO commits VALUES (1, 'eeeeeee555', 'x', 'me@example.com', '2026-09-04T10:06:00Z', '2026-09-04T10:06:00Z', 'Merge main', 2, 0, 0, 0, 0)")
+    # a stash entry an older scan stored: two parents like a merge, but no ref reaches it
+    conn.execute("INSERT INTO commits VALUES (1, 'fffffff666', 'x', 'me@example.com', '2026-09-01T10:06:00Z', '2026-09-01T10:06:00Z', 'On main: parked', 2, 0, 0, 0, 0)")
+    conn.execute("INSERT INTO commit_reach (repo_id, sha, on_default, pushed, reachable) VALUES (1, 'fffffff666', 0, 0, 0)")
+    link_repo(conn, 1)
+    assert _links(conn) == {
+        "bbbbbbb222": ("claude_code:B", "inferred"),     # no record: the clock is all there is
+        "ccccccc333": ("claude_code:C", "inferred"),     # it did edit files: a shell or unmapped change is plausible
+        "ddddddd444": ("claude_code:D", "coauthored"),   # an agent made this commit; D is the one that was running
+        "eeeeeee555": ("claude_code:D", "inferred"),     # a merge needs no edit
+    }
