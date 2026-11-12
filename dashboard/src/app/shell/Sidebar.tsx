@@ -1,6 +1,7 @@
 import { Link, useRouterState } from '@tanstack/react-router';
 import { Icon, type IconName } from '@/components/ui/Icon';
 import { useIngestStatus, usePricing, useUnseenAlerts } from '@/lib/api/hooks';
+import { useWorkStatus } from '@/features/work/api';
 
 const GROUPS: { h: string; items: { to: string; label: string; icon: IconName }[] }[] = [
   { h: 'MONITOR', items: [{ to: '/', label: 'Overview', icon: 'grid' }, { to: '/alerts', label: 'Alerts', icon: 'bell' }] },
@@ -24,6 +25,10 @@ export function Sidebar() {
   const pricing = usePricing().data;
   const busy = ingest && !(ingest.foregroundComplete && ingest.pending === 0);
   const isActive = (to: string) => (to === '/' ? path === '/' : path.startsWith(to));
+  const workOn = useWorkStatus().enabled;
+  const groups = workOn
+    ? [...GROUPS.slice(0, 2), { h: 'WORK', items: [{ to: '/projects', label: 'Projects', icon: 'folder' as const }] }, ...GROUPS.slice(2)]
+    : GROUPS;
   return (
     <aside className="w-52 shrink-0 bg-bg-1 border-r border-line flex flex-col">
       <div className="flex items-center gap-2 h-12 px-4 border-b border-line">
@@ -37,9 +42,12 @@ export function Sidebar() {
         />
       </div>
       <nav className="p-2 flex flex-col gap-0.5 flex-1">
-        {GROUPS.map((g) => (
+        {groups.map((g) => (
           <div key={g.h} className="contents">
-            <div className="text-[10px] tracking-[0.12em] text-ink-2 px-2 pt-3 pb-1 font-medium">{g.h}</div>
+            <div className="text-[10px] tracking-[0.12em] text-ink-2 px-2 pt-3 pb-1 font-medium">
+              {g.h}
+              {g.h === 'WORK' && <span className="ml-1.5 px-1 rounded-sm border border-accent/40 text-accent-ink tracking-normal">TRIAL</span>}
+            </div>
             {g.items.map((it) => (
               <Link
                 key={it.to}
