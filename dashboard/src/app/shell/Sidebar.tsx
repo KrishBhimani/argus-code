@@ -15,7 +15,7 @@ const GROUPS: { h: string; items: { to: string; label: string; icon: IconName }[
     ],
   },
   { h: 'SEARCH', items: [{ to: '/search', label: 'Transcripts', icon: 'search' }] },
-  { h: 'GOVERN', items: [{ to: '/settings', label: 'Settings', icon: 'gear' }] },
+  { h: 'GOVERN', items: [{ to: '/commands', label: 'Commands', icon: 'terminal' }, { to: '/settings', label: 'Settings', icon: 'gear' }] },
 ];
 
 export function Sidebar() {

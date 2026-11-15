@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
+import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { TopBar, Page } from '@/app/shell/TopBar';
 import { Seg } from '@/components/ui/Seg';
 import { Tile } from '@/components/ui/Tile';
@@ -59,6 +59,7 @@ export default function SessionPage() {
         />
         {sess && <Pill kind="mute">{sess.primary_model}</Pill>}
         {sess?.agent_version && <Pill kind="mute">{agentLabel(sess.agent)} {sess.agent_version}</Pill>}
+        <Link to="/commands" search={{ session: id }} className="text-[11px] whitespace-nowrap">Commands →</Link>
       </TopBar>
       <Page>
         {!sess ? (

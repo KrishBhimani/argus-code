@@ -10,9 +10,9 @@ from model output, so they are treated as hostile text:
 - control characters and text-direction overrides are replaced, so stored text cannot drive
   a terminal or disguise itself in a browser.
 
-The rules match text. They do not understand the command: a variable, a script file or an
-alias can hide a deletion from them, and ``echo rm -rf /`` is flagged though it deletes
-nothing. A flag means "worth a look", never "this was harmful".
+The rules match text. They do not understand the command: a variable, a script file, an
+alias or code handed to an interpreter can hide a deletion from them, and ``echo rm -rf /``
+is flagged though it deletes nothing. A flag means "worth a look", never "this was harmful".
 """
 from __future__ import annotations
 
@@ -215,7 +215,43 @@ def _delete(args: list[str], powershell: bool) -> Risk | None:
     return Risk("delete-recursive", "high" if any(_WIDE_TARGET.match(t) for t in targets) else "low")
 
 
+_HEREDOC = re.compile(r"<<-?[ \t]{0,3}(['\"]?)([A-Za-z_][A-Za-z0-9_]{0,40})\1")
+_MAX_HEREDOCS = 64
+_HEREDOC_SHELLS = _SHELLS | {"ssh"}
+
+
+def _shell_text(text: str) -> str:
+    """`text` without the bodies of here-documents that feed something other than a shell.
+
+    `python - <<'EOF' ... EOF` and `cat > f.sql <<EOF ... EOF` hand text to a program or a
+    file; reading that text as shell commands flagged scripts that merely contained the
+    words `DROP TABLE` or `mkfs`. A here-document fed to sh/bash/ssh is kept. Past
+    `_MAX_HEREDOCS` the rest is left as it is (and so still read): bounded work, and the
+    cautious side.
+    """
+    out, pos = [], 0
+    for _ in range(_MAX_HEREDOCS):
+        m = _HEREDOC.search(text, pos)
+        if not m:
+            break
+        body = text.find("\n", m.end())
+        if body < 0:
+            break
+        end = re.compile(r"\n[ \t]*" + re.escape(m.group(2)) + r"[ \t]*(?=\n|$)").search(text, body)
+        after = end.end() if end else len(text)
+        line = text[text.rfind("\n", 0, m.start()) + 1:m.start()]
+        consumer = _SPLIT.split(line)[-1].split("|")[-1]
+        if any(_word(t) in _HEREDOC_SHELLS for t in consumer.split()):
+            out.append(text[pos:after])
+        else:
+            out.append(text[pos:body])
+        pos = after
+    out.append(text[pos:])
+    return "".join(out)
+
+
 def _risks(text: str) -> tuple[Risk, ...]:
+    text = _shell_text(text)
     found: dict[str, str] = {}
 
     def add(r: Risk | None) -> None:

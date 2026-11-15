@@ -5,4 +5,6 @@ Importing this module auto-imports every known detector so their
 """
 from . import cache_hit_drop  # noqa: F401
 from . import cost_spike  # noqa: F401
+from . import risky_command  # noqa: F401
+from . import secret_in_command  # noqa: F401
 from . import tool_error_rate_spike  # noqa: F401

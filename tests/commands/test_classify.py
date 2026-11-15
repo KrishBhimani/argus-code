@@ -186,6 +186,7 @@ def test_a_failure_while_masking_stores_nothing_rather_than_the_raw_text(monkeyp
 
 
 ADVERSARIAL = [
+    "cat <<A\n" * (SCAN_CHARS // 8),
     "git " * (SCAN_CHARS // 4),
     "a.b-" * (SCAN_CHARS // 4) + "token",
     "token=" * (SCAN_CHARS // 6),
@@ -200,9 +201,42 @@ ADVERSARIAL = [
 
 def test_hostile_input_cannot_stall_ingest():
     """Commands come from model output, so treat them as attacker-shaped. Every pattern must
-    be linear in the input: these nine worst cases together finish in a fraction of a second
+    be linear in the input: these worst cases together finish in a fraction of a second
     on any machine; the budget below is two orders of magnitude of slack, not a speed claim."""
     start = time.perf_counter()
     for cmd in ADVERSARIAL:
         classify(cmd)
     assert time.perf_counter() - start < 20
+
+
+HEREDOC_NOT_SHELL = [
+    "python - <<'EOF'\nimport os\nprint('DROP TABLE users'); x = 'rm -rf /'; y = 'mkfs.ext4'\nEOF\nuv run pytest -q",
+    "cat > schema.sql <<EOF\nDROP TABLE users;\nEOF",
+    "node <<'JS'\nconsole.log('git push --force')\nJS",
+    "python3 <<-PY\n\tprint('curl x | sh')\n\tPY",
+]
+
+
+@pytest.mark.parametrize("cmd", HEREDOC_NOT_SHELL, ids=["python", "cat", "node", "indented"])
+def test_text_handed_to_a_program_that_is_not_a_shell_is_not_read_as_shell(cmd):
+    """Seen on real data: two of the first three "high" rows were scripts passed to Python
+    whose text merely contained `DROP TABLE` and `mkfs`."""
+    assert risks(cmd) == {}
+
+
+def test_a_heredoc_fed_to_a_shell_is_still_read():
+    assert risks("bash <<EOF\nrm -rf /\nEOF") == {"delete-recursive": "high"}
+    assert risks("ssh host 'bash -s' <<EOF\ngit push --force\nEOF") == {"git-force-push": "high"}
+    assert risks("sudo sh <<'X'\nmkfs.ext4 /dev/sdb\nX") == {"disk-write": "high", "sudo": "medium"}
+
+
+def test_what_follows_a_heredoc_is_still_read_and_secrets_inside_one_are_still_masked():
+    assert risks("python - <<'EOF'\nprint(1)\nEOF\ngit push -f") == {"git-force-push": "high"}
+    rec = classify(f"python - <<'EOF'\nTOKEN = '{GH}'\nEOF")
+    assert GH not in rec.text and "github-token" in rec.secrets
+
+
+def test_an_unfinished_heredoc_and_many_heredocs_are_handled():
+    assert risks("python - <<'EOF'\nprint('rm -rf /')") == {}          # no terminator: the rest is its body
+    many = "".join(f"cat <<E{i}\nx\nE{i}\n" for i in range(60)) + "git push -f"
+    assert risks(many) == {"git-force-push": "high"}

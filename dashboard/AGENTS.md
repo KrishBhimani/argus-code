@@ -30,6 +30,11 @@ analyses in `src/lib/analysis/`.
   are content-hashed, so a real change shows as new `assets/index-*.js|css` plus
   an updated `index.html` — verify the new asset in `dashboard-dist` before
   committing.
+- **Commands page (`features/commands/`, route `/commands`, optional `?session=`).**
+  The command ledger. A command is model output: it renders as a React text node inside
+  a `<pre>` and nothing else. Never put command text in `href`, `title`-as-markup, a
+  class name, or anything evaluated; `CommandsPage.test.tsx` asserts markup in a command
+  creates no element. Filters go to the server through `URLSearchParams`.
 - **Work trial (`features/work/`, routes `/projects`, `/projects/$repo`).** The sidebar's
   `WORK › Projects` item renders only when `GET /api/work/status` succeeds (it 404s
   unless `argus start --work`). Its API client lives in `features/work/api.ts`, not

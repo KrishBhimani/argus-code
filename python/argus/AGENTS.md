@@ -143,7 +143,11 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
     target (`low` inside a project, `high` at root/home/drive). Unknown-shape secrets
     passed as plain arguments are not caught; over-masking is preferred to under-masking.
 - `detectors/` — alert detectors: the registry, the shared helpers in `base.py`,
-  and one module per rule (`tool_error_rate_spike`, `cost_spike`, `cache_hit_drop`).
+  and one module per rule (`tool_error_rate_spike`, `cost_spike`, `cache_hit_drop`,
+  and from the command ledger `risky_command`, `secret_in_command`). The two ledger
+  rules are keyed by top-level session over the trailing 7 days and are always
+  `warning`: the ledger matches a command's text, so an alert says "look", not "harm
+  was done". Only `high` commands alert; reading a `.env` file does not.
 - `pricing/` — pricing table load / refresh / compute; bundled JSON under repo `pricing/`.
   `argus pricing refresh` writes to `<data_dir>/pricing/` (never into the installed
   package — upgrades wipe it and it may be read-only); `load_pricing_table(user_dir=...)`
