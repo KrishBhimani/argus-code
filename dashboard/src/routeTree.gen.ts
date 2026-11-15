@@ -18,6 +18,8 @@ import { Route as SessionRouteImport } from './routes/session'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ToolsRouteImport } from './routes/tools'
 import { Route as TrendsRouteImport } from './routes/trends'
+import { Route as ProjectsIndexRouteImport } from './routes/projects.index'
+import { Route as ProjectsRepoRouteImport } from './routes/projects.$repo'
 import { Route as SessionsIndexRouteImport } from './routes/sessions.index'
 import { Route as SessionsIdRouteImport } from './routes/sessions.$id'
 
@@ -66,6 +68,16 @@ const TrendsRoute = TrendsRouteImport.update({
   path: '/trends',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ProjectsIndexRoute = ProjectsIndexRouteImport.update({
+  id: '/projects/',
+  path: '/projects/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProjectsRepoRoute = ProjectsRepoRouteImport.update({
+  id: '/projects/$repo',
+  path: '/projects/$repo',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SessionsIndexRoute = SessionsIndexRouteImport.update({
   id: '/sessions/',
   path: '/sessions/',
@@ -87,7 +99,9 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/tools': typeof ToolsRoute
   '/trends': typeof TrendsRoute
+  '/projects/$repo': typeof ProjectsRepoRoute
   '/sessions/$id': typeof SessionsIdRoute
+  '/projects/': typeof ProjectsIndexRoute
   '/sessions/': typeof SessionsIndexRoute
 }
 export interface FileRoutesByTo {
@@ -100,7 +114,9 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/tools': typeof ToolsRoute
   '/trends': typeof TrendsRoute
+  '/projects/$repo': typeof ProjectsRepoRoute
   '/sessions/$id': typeof SessionsIdRoute
+  '/projects': typeof ProjectsIndexRoute
   '/sessions': typeof SessionsIndexRoute
 }
 export interface FileRoutesById {
@@ -114,7 +130,9 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/tools': typeof ToolsRoute
   '/trends': typeof TrendsRoute
+  '/projects/$repo': typeof ProjectsRepoRoute
   '/sessions/$id': typeof SessionsIdRoute
+  '/projects/': typeof ProjectsIndexRoute
   '/sessions/': typeof SessionsIndexRoute
 }
 export interface FileRouteTypes {
@@ -129,7 +147,9 @@ export interface FileRouteTypes {
     | '/settings'
     | '/tools'
     | '/trends'
+    | '/projects/$repo'
     | '/sessions/$id'
+    | '/projects/'
     | '/sessions/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -142,7 +162,9 @@ export interface FileRouteTypes {
     | '/settings'
     | '/tools'
     | '/trends'
+    | '/projects/$repo'
     | '/sessions/$id'
+    | '/projects'
     | '/sessions'
   id:
     | '__root__'
@@ -155,7 +177,9 @@ export interface FileRouteTypes {
     | '/settings'
     | '/tools'
     | '/trends'
+    | '/projects/$repo'
     | '/sessions/$id'
+    | '/projects/'
     | '/sessions/'
   fileRoutesById: FileRoutesById
 }
@@ -169,7 +193,9 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
   ToolsRoute: typeof ToolsRoute
   TrendsRoute: typeof TrendsRoute
+  ProjectsRepoRoute: typeof ProjectsRepoRoute
   SessionsIdRoute: typeof SessionsIdRoute
+  ProjectsIndexRoute: typeof ProjectsIndexRoute
   SessionsIndexRoute: typeof SessionsIndexRoute
 }
 
@@ -238,6 +264,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TrendsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/projects/': {
+      id: '/projects/'
+      path: '/projects'
+      fullPath: '/projects/'
+      preLoaderRoute: typeof ProjectsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/projects/$repo': {
+      id: '/projects/$repo'
+      path: '/projects/$repo'
+      fullPath: '/projects/$repo'
+      preLoaderRoute: typeof ProjectsRepoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/sessions/': {
       id: '/sessions/'
       path: '/sessions'
@@ -265,7 +305,9 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   ToolsRoute: ToolsRoute,
   TrendsRoute: TrendsRoute,
+  ProjectsRepoRoute: ProjectsRepoRoute,
   SessionsIdRoute: SessionsIdRoute,
+  ProjectsIndexRoute: ProjectsIndexRoute,
   SessionsIndexRoute: SessionsIndexRoute,
 }
 export const routeTree = rootRouteImport

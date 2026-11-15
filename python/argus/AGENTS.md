@@ -39,6 +39,92 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   guard, `daemon start`, `argus start` read-only mode) use `running_pid`, which
   also counts UNVERIFIED and tells the user how to clear it. The Windows branch
   is unit-tested with a fake `kernel32`, not exercised on Windows in CI.
+- `work/` — **trial** (opt-in `argus start --work`, `argus work scan|status`): local git
+  history + transcript facts the pipeline skips, session↔commit links labelled
+  `exact`/`files`/`coauthored`/`inferred`, and `/api/work/*`. Writes only
+  `<data_dir>/work.db`; `argus.db` is reached solely through a read-only `ATTACH`
+  (asserted by `tests/work/test_isolation.py`). Nothing imports it unless the flag is
+  on. Removal = delete this package, `features/work/`, two routes, and `work.db`.
+  A **project is a repo, not a folder**: `repos` has one row per folder, and folders
+  sharing `project_key` (normalized `origin` URL → else first commit → else the path;
+  credentials stripped) are one project. Queries resolve any folder id to the whole
+  group and count each commit sha once, keeping the strongest link. **Whose commit:**
+  timing links (`coauthored`, `inferred`) are offered only for commits the user authored
+  (`repos.user_emails` + the global git email); an agent co-author trailer says how a
+  commit was written, never whose it is. "Mine" scope = authored by the user, or `exact`
+  (a session's transcript shows it making that sha).
+  **File-edit record** (`work/edits.py`, table `session_files`): one row per session and
+  file it edited (`Edit`/`Write`/`MultiEdit`/`NotebookEdit` inputs; normalized absolute
+  path, edit count, first and last time), sub-agent edits rolled up to the session that
+  started them. It reads the transcripts with its own offsets (`file_offsets` keys
+  prefixed `edits:`), so it never moves the facts pass's place and backfills on a
+  `work.db` made before it. Attempted edits count; shell-only changes are not seen;
+  sessions whose transcript is already deleted have no rows and keep the older rules.
+  Two things are derived from it. *Where a session belongs* (`collector._assign_by_edits`,
+  for sessions with new lines): the project with the most edited files, counted across
+  its folders, then that project's folder with the most; the starting folder wins a tie;
+  no in-repo edit leaves the `cwd` mapping. A file's repo is the nearest folder above it
+  holding `.git`, so a nested repo or worktree is its own folder. When the chosen folder
+  is not the starting one, `git_branch` is cleared (it described the other folder). A
+  session still belongs to exactly one project; its cost is not split.
+  *`files` evidence* (`linker.py`, above the two timing levels): a commit the user
+  authored that changes a file the session edited before it, at most `FILES_WINDOW_MS`
+  (7 days) earlier, with no other commit having changed that file in between; more
+  shared files wins, then the nearer edit. *Timing and read-only sessions:* a session
+  read for edits that used no edit tool at all gets no `inferred` link, except to a
+  reachable merge commit (a merge needs no edit); `coauthored` still links, since the
+  commit itself names an agent. A session whose edits fall outside every known repo
+  is not read-only: shell or unmapped changes are plausible there.
+  *Stash:* `refs/stash` is left out of the scan, the ref tips and reachability
+  (`gitscan.ALL_REFS`): stash entries are commit objects but not commits. One stored
+  by an older scan becomes `reachable = 0` and stops counting.
+  *Thread grouping* (`stories.group_stories`): a session joins the thread, active within
+  the gap, with which it shares project files (at least `SHARE` = 25% of the smaller
+  side; paths are repo-relative, so worktrees agree), the most shared winning. A branch
+  only holds sessions together when it is not long-lived (`LONG_LIVED` names plus the
+  project's default branches): unrelated work passes through `main`. A session without
+  a record (`files is None`, not in `edits_seen`) falls back to "same branch".
+  *Explored* (`threads.py`): a thread with no commits whose sessions all have a record
+  and edited no project file is `explored` (a question or review), never `dropped` or
+  `uncommitted`; with edits and no commit the reason says how many files. A reason
+  says why, never what it cost: the row shows the cost. Outcome
+  counts carry `explored` beside `shipped`/`open`/`dropped`.
+  *Read cost* (`queries.py`): `core.turns` has no index on time, so a read by time is a
+  pass over the table. A request reads the range's turns and their skills once (`_Scan`)
+  and shares them across projects; per-session facts are fetched one query per kind,
+  never per session; `projects` asks SQL for the latest own commit instead of loading a
+  project's history. Guarded by a statement-count test. Columns added
+  after the first trial build are added in `open_work_db` only when missing.
+  Time comes from one source per session, best first: `measured` (transcript
+  `turn_duration`), `estimated` (transcript gaps), `archive` (argus.db turn gaps, for
+  sessions whose transcript is gone; same 5-min cap). Such sessions are titled from
+  the prompt nearest their start (`title_source = 'prompt'`, placeholders stripped);
+  transcript titles always win. Tokens and cost always come from argus.db turns.
+  A measured turn over `LONG_TURN_MS` (1 h) is wall clock with waiting in it, so the
+  transcript gap estimate inside that turn is counted instead. A story cut by the
+  range carries `whole` (the session's end-to-end totals). PR tags are kept only when
+  their repository matches the project's remote.
+  **Threads:** a story gets a `state` + plain-words `reason` from `work/threads.py`
+  (pure; ordered rules, `unknown` first) using scan-time git facts: `commit_reach`
+  (per commit: on the default branch? on any remote? NULL pushed = no remote, never
+  "unpushed") and `repos.{default_ref, has_remote, reach_tips, dirty, remote_as_of}`.
+  Reachability is re-read when ref tips move or rows are missing. A PR whose number is
+  on the project's default branch (`… (#N)` squash / `Merge pull request #N`) ships its
+  thread, since squash merges never make the thread's own commits reachable. Only the
+  newest thread in a folder may claim its uncommitted changes. `/api/work/threads` lists
+  open threads (30-day lookback) + period counts. Argus never fetches: remote state is
+  as of the user's last fetch (`remote_as_of`, FETCH_HEAD mtime).
+  **Knowing a PR merged:** locally (always on, only when refs move) a squash is matched by
+  content — a branch containing a session commit whose `git patch-id` is on the default
+  branch marks its commits `commit_reach.landed` — and remote branches already in main are
+  kept as `repos.merged_branches` (release PRs fast-forwarded, never the default branch).
+  **GitHub PR status** (`work/github.py`, opt-in, off by default) asks through the user's
+  own `gh` CLI: one batched GraphQL query per `owner/repo` (validated before it reaches a
+  query), answers cached in `pr_status`; MERGED/CLOSED are final and never re-asked. One
+  switch and one clock in `meta` (`github_enabled`, `github_checked_at`): the CLI
+  (`argus work github enable|disable|refresh`), `/api/work/github*` and the scan's
+  `maybe_refresh` (every 30 min when on) all call the same functions; every refresh resets
+  the clock. `gh` is the work trial's only network path; Argus never reads a token.
 - `detectors/` — alert detectors: the registry, the shared helpers in `base.py`,
   and one module per rule (`tool_error_rate_spike`, `cost_spike`, `cache_hit_drop`).
 - `pricing/` — pricing table load / refresh / compute; bundled JSON under repo `pricing/`.

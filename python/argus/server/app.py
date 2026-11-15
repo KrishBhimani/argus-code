@@ -34,6 +34,7 @@ class ServerOpts:
     pricing_table: PricingTable
     host: str = "127.0.0.1"
     daemon: bool = False
+    work_data_dir: Path | None = None  # set only by `argus start --work`
 
 
 # Host header values that name the loopback interface. A browser only puts one
@@ -146,6 +147,11 @@ def build_app(repo: Repository, opts: ServerOpts) -> FastAPI:
         ),
     )
     app.include_router(api)
+
+    if opts.work_data_dir is not None:
+        from ..work.api import build_work_router  # trial: imported only when on
+
+        app.include_router(build_work_router(opts.work_data_dir))
 
     # Static dashboard mount LAST so /api/* routes win.
     #

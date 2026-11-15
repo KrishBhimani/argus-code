@@ -50,6 +50,10 @@ claude_app.add_typer(template_app, name="template")
 app.add_typer(claude_app, name="claude")
 daemon_app = typer.Typer(help="Background ingestion + detector daemon (argusd)")
 app.add_typer(daemon_app, name="daemon")
+work_app = typer.Typer(help="Work-analysis trial: git + session links (writes only ~/.argus/work.db)")
+app.add_typer(work_app, name="work")
+github_app = typer.Typer(help="GitHub PR status for threads (opt-in; asks through your gh CLI)")
+work_app.add_typer(github_app, name="github")
 
 
 def _setup_logging(quiet: bool = False, verbose: bool = False) -> None:
@@ -91,6 +95,9 @@ def start(
     data_dir: Path = typer.Option(_default_data_dir(), "--data-dir"),
     quiet: bool = typer.Option(False, "--quiet"),
     verbose: bool = typer.Option(False, "--verbose"),
+    work: bool = typer.Option(
+        False, "--work", help="Also run the work-analysis trial (writes only ~/.argus/work.db)"
+    ),
 ) -> None:
     """Start the watcher, ingester, and dashboard server."""
     _setup_logging(quiet=quiet, verbose=verbose)
@@ -117,6 +124,13 @@ def start(
         typer.echo(str(e), err=True)
         raise typer.Exit(code=1)
 
+    collector = None
+    if work:
+        from .adapters.claude_code.adapter import ClaudeCodeAdapter
+        from .work.collector import WorkCollector
+
+        collector = WorkCollector(data_dir, ClaudeCodeAdapter()).start()
+
     dash_dir = _dashboard_dir()
     server_app = build_app(
         runtime.repo,
@@ -129,6 +143,7 @@ def start(
             adapters=runtime.adapters,
             pricing_table=runtime.pricing_table,
             daemon=read_only,
+            work_data_dir=data_dir if work else None,
         ),
     )
     display_host = "localhost" if host in ("0.0.0.0", "::") else host
@@ -149,6 +164,8 @@ def start(
     except KeyboardInterrupt:
         pass
     finally:
+        if collector is not None and not collector.stop():
+            logger.warning("work: collector still running at shutdown; it writes only work.db")
         runtime.stop()
         logger.info("Argus stopped.")
 
@@ -542,6 +559,92 @@ def daemon_logs(
             follow_log(p, emit=lambda ln: typer.echo(ln))
         except KeyboardInterrupt:
             pass
+
+
+@work_app.command("scan")
+def work_scan(
+    data_dir: Path = typer.Option(_default_data_dir(), "--data-dir"),
+    claude_root: Path = typer.Option(Path.home() / ".claude", "--claude-root", hidden=True),
+) -> None:
+    """Run one work-analysis pass now."""
+    from .adapters.claude_code.adapter import ClaudeCodeAdapter
+    from .work.collector import run_pass
+
+    r = run_pass(data_dir, ClaudeCodeAdapter(claude_root))
+    typer.echo(
+        f"{r.repos} repo(s), {r.commits} commit(s) read; links: "
+        f"{r.links['exact']} exact, {r.links['files']} by files, {r.links['coauthored']} co-authored, {r.links['inferred']} inferred"
+    )
+    for where, err in r.errors.items():
+        typer.echo(f"  ! {where}: {err}", err=True)
+
+
+@work_app.command("status")
+def work_status(data_dir: Path = typer.Option(_default_data_dir(), "--data-dir")) -> None:
+    """Show what the work-analysis trial has collected."""
+    from .work.db import get_meta, open_work_db
+
+    from .work import github
+
+    conn = open_work_db(data_dir)
+    typer.echo(f"last scan: {get_meta(conn, 'last_scan_at') or 'never'}")
+    gh = github.status(conn)
+    typer.echo(f"GitHub: {'on' if gh['enabled'] else 'off'}"
+               + (f" · last checked {gh['checked_at']}" if gh["checked_at"] else ""))
+    if gh["last_error"]:
+        typer.echo(f"  ! {gh['last_error']}")
+    for r in conn.execute("SELECT display_name, root, present, last_error FROM repos ORDER BY display_name"):
+        flag = "" if r["present"] else "  (repo gone, archived)"
+        err = f"  ! {r['last_error']}" if r["last_error"] else ""
+        typer.echo(f"  {r['display_name']:<28} {r['root']}{flag}{err}")
+    conn.close()
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _github_report(result: dict) -> None:
+    typer.echo(f"checked {result['checked']} PR(s)")
+    if result["error"]:
+        typer.echo(f"  ! {result['error']}", err=True)
+
+
+@github_app.command("enable")
+def work_github_enable(data_dir: Path = typer.Option(_default_data_dir(), "--data-dir")) -> None:
+    """Turn GitHub PR status on and check now; then every 30 min during scans."""
+    from .work import github
+    from .work.db import open_work_db
+
+    conn = open_work_db(data_dir)
+    typer.echo("GitHub PR status: on")
+    _github_report(github.enable(conn, _now_iso()))
+    conn.close()
+
+
+@github_app.command("disable")
+def work_github_disable(data_dir: Path = typer.Option(_default_data_dir(), "--data-dir")) -> None:
+    """Turn GitHub PR status off (answers already fetched are kept)."""
+    from .work import github
+    from .work.db import open_work_db
+
+    conn = open_work_db(data_dir)
+    github.disable(conn)
+    typer.echo("GitHub PR status: off")
+    conn.close()
+
+
+@github_app.command("refresh")
+def work_github_refresh(data_dir: Path = typer.Option(_default_data_dir(), "--data-dir")) -> None:
+    """Check PR status on GitHub now and restart the 30-min clock (works even when off)."""
+    from .work import github
+    from .work.db import open_work_db
+
+    conn = open_work_db(data_dir)
+    _github_report(github.refresh(conn, _now_iso()))
+    conn.close()
 
 
 def main() -> None:
