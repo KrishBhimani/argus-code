@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from ...schema.types import RawSessionHeader
 from ..base import AdapterIngestResult, ParseError
+from .extract_commands import extract_commands
 from .extract_tool_calls import errored_tool_use_ids, extract_tool_calls
 from .extract_transcript import extract_transcript_segments
 from .extract_turns import extract_turns
@@ -147,6 +148,7 @@ def ingest_claude_code_file(
         turns=turns,
         tool_calls=tool_calls,
         tool_error_ids=errored_tool_use_ids(user_lines),
+        commands=extract_commands(assistant_lines),
         segments=segments,
         parse_errors=parse_errors,
     )

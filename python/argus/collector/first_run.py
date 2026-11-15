@@ -59,6 +59,12 @@ SESSION_DURATION_REPAIR_KEY = "repair_session_duration_v1"
 FORK_DEDUP_REPAIR_KEY = "repair_fork_duplicates_v1"
 
 #: "Re-read every session still on disk once" sweeps, oldest first.
+#: The command ledger (migration 008) starts empty on an existing archive: sessions
+#: ingested before it sit at EOF. Their files are re-read once, chosen by what is missing
+#: (`Repository.sessions_missing_commands`), not by `computed_at`: a session in use at
+#: upgrade time is recomputed by the first tick and would be passed over by a sweep.
+COMMANDS_BACKFILL_KEY = "backfill_commands_v1"
+
 _REREAD_ALL_SWEEPS = (STREAMED_OUTPUT_FIX_KEY, TOOL_ERRORS_FIX_KEY)
 
 #: Per-run cap on backfill re-reads (see collector/AGENTS.md "Bounded per run").
@@ -495,6 +501,19 @@ def _backfill_missing_derived_data(
     # session_id "<agent>:<native id>" -> file paths lookup.
     files = files_by_session(adapters)
 
+    # One-shot: fill the command ledger for sessions ingested before it existed. A shell
+    # call whose command is blank or malformed never gets a row, so the flag (not an empty
+    # selector) is what stops this. Transcripts already deleted can't be read and don't count.
+    # A session that keeps a shell call without a row would otherwise be picked again every
+    # start and, under the per-run cap, crowd out the rest: a cursor (the last session id
+    # attempted) makes each start continue after the previous one.
+    commands_pending = repo.get_app_meta(COMMANDS_BACKFILL_KEY) != "1"
+    cursor = repo.get_app_meta(COMMANDS_BACKFILL_KEY + "_cursor") or ""
+    commands_ids = ({c["id"] for c in repo.sessions_missing_commands() if c["id"] in files and c["id"] > cursor}
+                    if commands_pending else set())
+    ids.update(commands_ids)
+    deep_reset.update(commands_ids)
+
     # One-shot "re-read every session still on disk" sweeps. Nothing in the
     # DB distinguishes a pre-fix row (placeholder output_tokens from a
     # message's first streamed line; an is_error lost because the tool_result
@@ -513,6 +532,12 @@ def _backfill_missing_derived_data(
         return  # interrupted: don't mark one-shot work done on a partial run
     if agent_fix_pending and len(candidates) < BACKFILL_CAP:
         repo.set_app_meta(agent_fix_key, "1")
+    if commands_pending:
+        attempted_commands = commands_ids & set(candidates)
+        if not commands_ids - attempted_commands:
+            repo.set_app_meta(COMMANDS_BACKFILL_KEY, "1")
+        elif attempted_commands:   # candidates are a sorted prefix, so nothing below the max was skipped
+            repo.set_app_meta(COMMANDS_BACKFILL_KEY + "_cursor", max(attempted_commands))
 
     # A sweep is done only when nothing it still needs remains — checked
     # AFTER the work, so a capped run can't mark it done early. A re-ingest
@@ -522,6 +547,27 @@ def _backfill_missing_derived_data(
     for key in pending_sweeps:
         if not set(_stale_on_disk(repo, key, files)) - attempted:
             repo.set_app_meta(key, "1")
+
+
+def _ingest_to_end(
+    adapter: Adapter, file: Path, repo: Repository, table: PricingTable,
+    should_stop: Callable[[], bool] = lambda: False,
+) -> None:
+    """Ingest `file` until its offset stops advancing. An adapter reads a bounded slice per
+    call (Claude Code: 64 MiB), so one call after a reset to 0 leaves the rest of a larger
+    transcript un-re-read: its derived rows stayed missing until some later tick."""
+    last = -1
+    while not should_stop():
+        ingest_file(adapter, file, repo, table)
+        offset = repo.get_file_offset(str(file))
+        if offset <= last:
+            return
+        last = offset
+        try:
+            if offset >= file.stat().st_size:
+                return
+        except OSError:
+            return
 
 
 def _reread(
@@ -548,7 +594,7 @@ def _reread(
                     repo.set_file_offset(str(sub), 0)
         for adapter, file in matches:
             try:
-                ingest_file(adapter, file, repo, table)
+                _ingest_to_end(adapter, file, repo, table, should_stop)
             except Exception as e:  # noqa: BLE001
                 repo.record_parse_error(
                     {

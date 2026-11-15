@@ -42,6 +42,22 @@ class RawToolCall(BaseModel):
     timestamp: str
 
 
+class RawCommand(BaseModel):
+    """A shell command an agent ran, as the transcript has it: raw, unmasked text.
+
+    It exists only in memory between the adapter and the collector, which is the single
+    place that masks secrets and stores it (``collector.pipeline._to_command``). Never log
+    or persist one of these.
+    """
+
+    tool_use_id: str      # the same id as its RawToolCall
+    shell: str            # bash | powershell | shell (Codex)
+    command: str
+    cwd: str
+    background: bool
+    timestamp: str
+
+
 class RawSegment(BaseModel):
     """Adapter-local transcript segment. uid_suffix = '{line_uuid}:{block_index}'."""
 
@@ -68,6 +84,8 @@ class AdapterIngestResult(BaseModel):
     # may have been stored by an earlier tick, so the collector applies these
     # by id rather than trusting ``RawToolCall.is_error`` alone.
     tool_error_ids: list[str] = []
+    # Shell commands among `tool_calls` (same tool_use_id). Raw text: see RawCommand.
+    commands: list[RawCommand] = []
 
 
 @runtime_checkable

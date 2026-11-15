@@ -20,6 +20,7 @@ from typing import Any, TypeVar
 
 from ..schema.types import (
     Alert,
+    Command,
     Prompt,
     Session,
     ToolCall,
@@ -580,6 +581,32 @@ class Repository:
             rows,
         )
 
+    @_writes
+    def upsert_commands(self, commands: list[Command]) -> None:
+        """Store ledger rows. Each must have its tool call stored already (FOREIGN KEY)."""
+        if not commands:
+            return
+        self.db.executemany(
+            """
+            INSERT INTO commands (id, session_id, timestamp, shell, cwd, command, truncated, background, severity, risks, secrets)
+            VALUES (:id, :session_id, :timestamp, :shell, :cwd, :command, :truncated, :background, :severity, :risks, :secrets)
+            ON CONFLICT(id) DO UPDATE SET
+              session_id=excluded.session_id, timestamp=excluded.timestamp, shell=excluded.shell,
+              cwd=excluded.cwd, command=excluded.command, truncated=excluded.truncated,
+              background=excluded.background, severity=excluded.severity,
+              risks=excluded.risks, secrets=excluded.secrets
+            """,
+            [
+                {
+                    "id": c.id, "session_id": c.session_id, "timestamp": c.timestamp, "shell": c.shell,
+                    "cwd": c.cwd, "command": c.command, "truncated": int(c.truncated),
+                    "background": int(c.background), "severity": c.severity,
+                    "risks": json.dumps(c.risks), "secrets": json.dumps(c.secrets),
+                }
+                for c in commands
+            ],
+        )
+
     def existing_tool_call_ids(self, ids: list[str]) -> set[str]:
         """Subset of ``ids`` already stored in tool_calls."""
         found: set[str] = set()
@@ -931,6 +958,24 @@ class Repository:
             LIMIT ?
             """,
             (limit,),
+        ).fetchall()
+        return [{"id": r["id"]} for r in rows]
+
+    def sessions_missing_commands(self) -> list[dict[str, Any]]:
+        """Top-level sessions with a shell tool call (their own or a sub-agent's) that has no
+        command-ledger row. Unbounded on purpose: most are sessions whose transcript is
+        gone, and the collector filters to files on disk before applying its cap. A blank
+        or malformed command never gets a row, so callers run this once (app_meta flag)."""
+        rows = self.db.execute(
+            """
+            SELECT DISTINCT CASE WHEN instr(t.session_id, '/') > 0
+                                 THEN substr(t.session_id, 1, instr(t.session_id, '/') - 1)
+                                 ELSE t.session_id END AS id
+            FROM tool_calls t
+            WHERE t.tool_name IN ('Bash', 'PowerShell', 'shell')
+              AND NOT EXISTS (SELECT 1 FROM commands c WHERE c.id = t.id)
+            ORDER BY 1
+            """
         ).fetchall()
         return [{"id": r["id"]} for r in rows]
 

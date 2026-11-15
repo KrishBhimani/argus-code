@@ -63,6 +63,13 @@ migrations; `repository.py` is the typed read/write API over SQLite.
   `collector/first_run.py` — keep their shapes stable. The last one is
   deliberately unbounded: the collector filters to files still on disk before
   applying its per-run cap.
+- **`commands` (MIGRATION_008) hangs off `tool_calls`.** One row per shell tool call,
+  same id, `ON DELETE CASCADE` from both the call and the session, so fork
+  de-duplication and a wipe take ledger rows with them and no code has to remember to.
+  `command` arrives already masked (see `python/argus/AGENTS.md`, `commands/`); never
+  write raw transcript text to it. Whether the command failed stays on
+  `tool_calls.is_error`. `sessions_missing_commands` is unbounded for the same reason
+  as `top_level_sessions_computed_before`.
 - **Upserts are idempotent** (conflict-replace) so re-ingesting a file from a reset
   offset never duplicates or corrupts rows. One exception is deliberate:
   `tool_calls.is_error` is monotonic (`MAX(old, new)` on conflict, and

@@ -104,6 +104,24 @@ class RawSessionHeader(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class Command(BaseModel):
+    """A ledger row: a shell command as stored (masked, cleaned, capped)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str               # the tool call's id
+    session_id: str
+    timestamp: str
+    shell: str
+    cwd: str
+    command: str
+    truncated: bool
+    background: bool
+    severity: str | None  # worst risk: low | medium | high
+    risks: list[dict[str, str]]
+    secrets: list[str]
+
+
 class ToolCall(BaseModel):
     model_config = ConfigDict(frozen=True)
 
