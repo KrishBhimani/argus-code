@@ -18,9 +18,10 @@ from .migrations.inline import (
     MIGRATION_005,
     MIGRATION_006,
     MIGRATION_007,
+    MIGRATION_008,
 )
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # What each versioned migration must leave behind: a schema object name
 # (table / index / trigger, looked up in sqlite_master) or "table.column".
@@ -38,6 +39,7 @@ _MIGRATION_ARTIFACTS: dict[int, tuple[str, ...]] = {
     5: ("alerts.resolved_at",),
     6: ("transcript_segments.tool_use_id", "idx_segments_tool_use"),
     7: ("idx_turns_message",),
+    8: ("commands", "idx_commands_session", "idx_commands_time", "idx_commands_flagged"),
 }
 
 
@@ -223,6 +225,7 @@ def open_db(path: str | Path, *, read_only: bool = False) -> sqlite3.Connection:
         (5, MIGRATION_005),
         (6, MIGRATION_006),
         (7, MIGRATION_007),
+        (8, MIGRATION_008),
     )
     for version, sql in versioned:
         if current < version:

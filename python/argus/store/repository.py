@@ -20,6 +20,7 @@ from typing import Any, TypeVar
 
 from ..schema.types import (
     Alert,
+    Command,
     Prompt,
     Session,
     ToolCall,
@@ -580,6 +581,116 @@ class Repository:
             rows,
         )
 
+    @_writes
+    def upsert_commands(self, commands: list[Command]) -> None:
+        """Store ledger rows. Each must have its tool call stored already (FOREIGN KEY)."""
+        if not commands:
+            return
+        self.db.executemany(
+            """
+            INSERT INTO commands (id, session_id, timestamp, shell, cwd, command, truncated, background, severity, risks, secrets)
+            VALUES (:id, :session_id, :timestamp, :shell, :cwd, :command, :truncated, :background, :severity, :risks, :secrets)
+            ON CONFLICT(id) DO UPDATE SET
+              session_id=excluded.session_id, timestamp=excluded.timestamp, shell=excluded.shell,
+              cwd=excluded.cwd, command=excluded.command, truncated=excluded.truncated,
+              background=excluded.background, severity=excluded.severity,
+              risks=excluded.risks, secrets=excluded.secrets
+            """,
+            [
+                {
+                    "id": c.id, "session_id": c.session_id, "timestamp": c.timestamp, "shell": c.shell,
+                    "cwd": c.cwd, "command": c.command, "truncated": int(c.truncated),
+                    "background": int(c.background), "severity": c.severity,
+                    "risks": json.dumps(c.risks), "secrets": json.dumps(c.secrets),
+                }
+                for c in commands
+            ],
+        )
+
+    #: "at least this severe": the filter the Commands page offers.
+    _SEVERITY_AT_LEAST = {"low": ("low", "medium", "high"), "medium": ("medium", "high"), "high": ("high",)}
+    _ROOT_OF_C = "CASE WHEN instr(c.session_id, '/') > 0 THEN substr(c.session_id, 1, instr(c.session_id, '/') - 1) ELSE c.session_id END"
+
+    def list_commands(
+        self, *, since_iso: str = "", q: str = "", severity: str | None = None, secrets: bool = False,
+        session_id: str | None = None, project: str | None = None, agent: str | None = None,
+        limit: int = 100, offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """A page of ledger rows, newest first, and how many match in all.
+
+        Every value is bound as a parameter. `q` is matched as literal text (LIKE with its
+        wildcards escaped); `session_id` matches that session and its sub-agents by
+        comparing prefixes, never as a pattern."""
+        where, args = ["1 = 1"], []
+        if since_iso:
+            where.append("c.timestamp >= ?")
+            args.append(since_iso)
+        if q:
+            escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            where.append("c.command LIKE ? ESCAPE '\\'")
+            args.append(f"%{escaped}%")
+        if severity:
+            levels = self._SEVERITY_AT_LEAST[severity]
+            where.append(f"c.severity IN ({','.join('?' for _ in levels)})")
+            args.extend(levels)
+        if secrets:
+            where.append("c.secrets != '[]'")
+        if session_id:
+            where.append("(c.session_id = ? OR substr(c.session_id, 1, length(?) + 1) = ? || '/')")
+            args.extend([session_id, session_id, session_id])
+        if project:
+            where.append("s.project_path = ?")
+            args.append(project)
+        if agent:
+            where.append("s.agent = ?")
+            args.append(agent)
+        base = f"FROM commands c JOIN sessions s ON s.id = c.session_id WHERE {' AND '.join(where)}"
+        total = self.db.execute(f"SELECT COUNT(*) {base}", args).fetchone()[0]
+        rows = self.db.execute(
+            f"""SELECT c.*, s.agent, s.project_path,
+                       COALESCE((SELECT t.is_error FROM tool_calls t WHERE t.id = c.id), 0) AS failed
+                {base} ORDER BY c.timestamp DESC, c.id LIMIT ? OFFSET ?""",
+            [*args, limit, offset],
+        ).fetchall()
+        return [
+            {
+                "id": r["id"], "session_id": r["session_id"], "timestamp": r["timestamp"], "agent": r["agent"],
+                "shell": r["shell"], "cwd": r["cwd"], "project_path": r["project_path"], "command": r["command"],
+                "truncated": bool(r["truncated"]), "background": bool(r["background"]), "failed": bool(r["failed"]),
+                "severity": r["severity"], "risks": json.loads(r["risks"]), "secrets": json.loads(r["secrets"]),
+            }
+            for r in rows
+        ], total
+
+    def command_counts(self, *, since_iso: str = "") -> dict[str, int]:
+        """How many ledger rows there are since `since_iso`, by worst severity and with a secret noted."""
+        r = self.db.execute(
+            """SELECT COUNT(*) AS total,
+                      COALESCE(SUM(severity = 'high'), 0) AS high, COALESCE(SUM(severity = 'medium'), 0) AS medium,
+                      COALESCE(SUM(severity = 'low'), 0) AS low, COALESCE(SUM(secrets != '[]'), 0) AS secrets
+               FROM commands WHERE timestamp >= ?""",
+            (since_iso,),
+        ).fetchone()
+        return {k: int(r[k]) for k in ("total", "high", "medium", "low", "secrets")}
+
+    def notable_commands_in_range(self, *, start_iso: str, end_iso: str) -> list[dict[str, Any]]:
+        """Commands in ``[start, end)`` that are high-risk or carried a secret, each with its
+        top-level session (a sub-agent's commands count with the session that started it)
+        and that session's project. Feeds the ledger's alert detectors."""
+        rows = self.db.execute(
+            f"""SELECT x.root AS session_id, COALESCE(s.project_path, '') AS project_path,
+                       x.severity, x.risks, x.secrets
+                FROM (SELECT {self._ROOT_OF_C} AS root, c.severity, c.risks, c.secrets, c.timestamp, c.id
+                      FROM commands c
+                      WHERE c.timestamp >= ? AND c.timestamp < ?
+                        AND (c.severity = 'high' OR c.secrets NOT IN ('[]', '["env-file"]'))) x
+                LEFT JOIN sessions s ON s.id = x.root
+                ORDER BY x.timestamp, x.id""",
+            (start_iso, end_iso),
+        ).fetchall()
+        return [{"session_id": r["session_id"], "project_path": r["project_path"], "severity": r["severity"],
+                 "risks": json.loads(r["risks"]), "secrets": json.loads(r["secrets"])} for r in rows]
+
     def existing_tool_call_ids(self, ids: list[str]) -> set[str]:
         """Subset of ``ids`` already stored in tool_calls."""
         found: set[str] = set()
@@ -931,6 +1042,24 @@ class Repository:
             LIMIT ?
             """,
             (limit,),
+        ).fetchall()
+        return [{"id": r["id"]} for r in rows]
+
+    def sessions_missing_commands(self) -> list[dict[str, Any]]:
+        """Top-level sessions with a shell tool call (their own or a sub-agent's) that has no
+        command-ledger row. Unbounded on purpose: most are sessions whose transcript is
+        gone, and the collector filters to files on disk before applying its cap. A blank
+        or malformed command never gets a row, so callers run this once (app_meta flag)."""
+        rows = self.db.execute(
+            """
+            SELECT DISTINCT CASE WHEN instr(t.session_id, '/') > 0
+                                 THEN substr(t.session_id, 1, instr(t.session_id, '/') - 1)
+                                 ELSE t.session_id END AS id
+            FROM tool_calls t
+            WHERE t.tool_name IN ('Bash', 'PowerShell', 'shell')
+              AND NOT EXISTS (SELECT 1 FROM commands c WHERE c.id = t.id)
+            ORDER BY 1
+            """
         ).fetchall()
         return [{"id": r["id"]} for r in rows]
 

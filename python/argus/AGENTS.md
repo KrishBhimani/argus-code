@@ -125,8 +125,29 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   (`argus work github enable|disable|refresh`), `/api/work/github*` and the scan's
   `maybe_refresh` (every 30 min when on) all call the same functions; every refresh resets
   the clock. `gh` is the work trial's only network path; Argus never reads a token.
+- `commands/` — the **command ledger**'s pure core (`classify.py`): what one shell command
+  becomes before it is stored. On by default. Binding:
+  - **A stored command is inert data.** Nothing executes it, hands it to a shell, or builds
+    SQL, a path or a link from it. Keep it that way in every reader (API, CLI, dashboard).
+  - **Masked before stored, masked before capped, fail closed.** Secret values become
+    `[redacted:<kind>]` (provider key shapes, auth headers, URL passwords, `--token` style
+    flags, names that say secret); masking runs before the length cap; if masking raises,
+    the raw text is dropped for a placeholder. `collector.pipeline._to_command` is the
+    only place a raw command becomes a stored one.
+  - **Treat commands as hostile text** (they are model output): every pattern must stay
+    linear in its input (no wildcard before a keyword, bounded look-ahead over tokens),
+    only `SCAN_CHARS` are read, and control characters and bidi overrides are replaced.
+    `tests/commands` holds the worst cases; add one with any new pattern.
+  - **Rules match text, they do not understand it.** A risk flag means "worth a look":
+    `echo rm -rf /` is flagged, a deletion inside a script is not seen. Severity is by
+    target (`low` inside a project, `high` at root/home/drive). Unknown-shape secrets
+    passed as plain arguments are not caught; over-masking is preferred to under-masking.
 - `detectors/` — alert detectors: the registry, the shared helpers in `base.py`,
-  and one module per rule (`tool_error_rate_spike`, `cost_spike`, `cache_hit_drop`).
+  and one module per rule (`tool_error_rate_spike`, `cost_spike`, `cache_hit_drop`,
+  and from the command ledger `risky_command`, `secret_in_command`). The two ledger
+  rules are keyed by top-level session over the trailing 7 days and are always
+  `warning`: the ledger matches a command's text, so an alert says "look", not "harm
+  was done". Only `high` commands alert; reading a `.env` file does not.
 - `pricing/` — pricing table load / refresh / compute; bundled JSON under repo `pricing/`.
   `argus pricing refresh` writes to `<data_dir>/pricing/` (never into the installed
   package — upgrades wipe it and it may be read-only); `load_pricing_table(user_dir=...)`

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from ...schema.types import RawSessionHeader, RawTurnEvent
-from ..base import AdapterIngestResult, RawSegment, RawToolCall
+from ..base import AdapterIngestResult, RawCommand, RawSegment, RawToolCall
 from .discover import parent_of
 from .lines import read_records
 from .records import (
@@ -171,11 +171,15 @@ def ingest_codex_file(
         started_at=stamps[0] if stamps else "", ended_at=stamps[-1] if stamps else None,
         agent_reported_cost_usd=None, metadata=_metadata(meta),
     )
+    folder = cwd if isinstance(cwd, str) else ""
     return AdapterIngestResult(
         header=header,
         turns=turns,
         tool_calls=raw_calls,
         tool_error_ids=[c.call_id for c, _ in calls if c.is_error],
+        commands=[RawCommand(tool_use_id=c.call_id, shell="shell", command=c.command, cwd=c.cwd or folder,
+                             background=False, timestamp=c.timestamp)
+                  for c, _ in calls if c.command],
         segments=segments,
         parse_errors=[e for e in errors if e.byte_offset >= from_offset],
     ), end

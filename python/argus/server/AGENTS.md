@@ -44,6 +44,13 @@ the `/api/...` routes over the repository.
   flip uvicorn's `should_exit` (then `force_exit`) before `server.run()`, and
   restores the previous handlers in a `finally`. This is what makes Ctrl+C exit
   without a traceback — don't remove it.
+- **`GET /api/commands` returns ledger text as data.** Commands come back as JSON
+  strings and are never interpreted, rendered or used to build a path, a query or a
+  link. Every filter is a bound parameter: `q` is literal text (LIKE with `%`, `_`
+  and `\` escaped), `session` matches a session and its sub-agents by prefix
+  comparison (never LIKE), `severity` means "at least", and enumerated parameters are
+  `Literal` types so anything else is refused. Don't add an export of commands
+  without neutralising spreadsheet formulas (`=`, `+`, `-`, `@` first characters).
 - **Read-only under the daemon.** When `argusd` is running, mutating endpoints
   return 409 pointing at the CLI (`argus indexing enable`) or `argus daemon stop`.
 - **The Origin allowlist is exact, and port-aware.** `is_allowed_origin(origin,

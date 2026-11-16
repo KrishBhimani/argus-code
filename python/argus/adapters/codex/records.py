@@ -86,6 +86,9 @@ class CallEvent:
     # "request": the model asked (its usage record follows);
     # "item": an execution finished (after the usage record that asked for it).
     side: str
+    # A CommandExecution item's command line (argv joined) and folder; raw, unmasked text.
+    command: str | None = None
+    cwd: str | None = None
 
 
 def _size(v: Any) -> int:
@@ -133,7 +136,14 @@ def call_from_record(rec: Record) -> CallEvent | None:
         if not isinstance(it, dict) or not isinstance(it.get("id"), str):
             return None
         kind, failed = it.get("type"), it.get("status") in _ERROR_STATUSES
+        command = cwd = None
         if kind == "CommandExecution":
+            raw = it.get("command")
+            if isinstance(raw, list) and raw and all(isinstance(a, str) for a in raw):
+                command = " ".join(raw)
+            elif isinstance(raw, str):
+                command = raw
+            cwd = it.get("cwd") if isinstance(it.get("cwd"), str) else None
             ec = it.get("exit_code")
             name, err, size = "shell", failed or (isinstance(ec, int) and ec != 0), _size(it.get("command"))
         elif kind == "FileChange":
@@ -152,7 +162,8 @@ def call_from_record(rec: Record) -> CallEvent | None:
             name, err, size = "view_image", failed, 0
         else:
             return None
-        return CallEvent(it["id"], name, rec.offset, rec.timestamp, int(bool(err)), size, None, "item")
+        return CallEvent(it["id"], name, rec.offset, rec.timestamp, int(bool(err)), size, None, "item",
+                         command=command if command and command.strip() else None, cwd=cwd)
     return None
 
 

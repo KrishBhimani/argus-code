@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Link } from '@tanstack/react-router';
 import { TopBar, Page } from '@/app/shell/TopBar';
 import { Seg } from '@/components/ui/Seg';
 import { Panel } from '@/components/ui/Panel';
@@ -19,7 +20,13 @@ const DETECTORS = [
   { n: 'tool_error_rate_spike', on: true, note: '7d vs 28d' },
   { n: 'cost_spike', on: true, note: '7d vs 28d/wk' },
   { n: 'cache_hit_drop', on: true, note: '7d vs 28d' },
+  { n: 'risky_command', on: true, note: 'last 7d' },
+  { n: 'secret_in_command', on: true, note: 'last 7d' },
 ];
+
+/** Alerts raised from the command ledger: their session's commands are one click away. */
+const LEDGER = new Set(['risky_command', 'secret_in_command']);
+const ledgerSession = (a: Alert) => (LEDGER.has(a.detector) && typeof a.metadata?.session_id === 'string' && a.metadata.session_id ? (a.metadata.session_id as string) : null);
 
 /** Identifying chips for a finding — the detectors key on a tool or a project. */
 const subject = (a: Alert) => {
@@ -65,7 +72,10 @@ export default function AlertsPage() {
                 <div className="flex flex-col gap-1 flex-1 min-w-0">
                   <span className="font-semibold">{a.title}</span>
                   <span className="text-ink-1">{a.message}</span>
-                  <div className="flex gap-2 mt-1.5 items-center"><Code>{a.detector}</Code>{chips.map((c) => <Code key={c}>{c}</Code>)}</div>
+                  <div className="flex gap-2 mt-1.5 items-center">
+                    <Code>{a.detector}</Code>{chips.map((c) => <Code key={c}>{c}</Code>)}
+                    {ledgerSession(a) && <Link to="/commands" search={{ session: ledgerSession(a)! }} className="text-[11px] ml-1">View commands →</Link>}
+                  </div>
                 </div>
                 <div className="flex flex-col items-end gap-2">
                   <span className="font-mono text-[11px] text-ink-2 whitespace-nowrap">{fmtWhen(a)}</span>

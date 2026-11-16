@@ -29,6 +29,8 @@ export const useIngestStatus = () =>
 export const usePricing = () => useQuery({ queryKey: ['pricing'], queryFn: api.pricing });
 export const useSearch = (p: Parameters<typeof api.search>[0], enabled = true) =>
   useQuery({ queryKey: ['search', p], queryFn: () => api.search(p), enabled });
+export const useCommands = (p: Parameters<typeof api.commands>[0]) =>
+  useQuery({ queryKey: ['commands', p], queryFn: () => api.commands(p), placeholderData: (prev) => prev });
 export const usePromptProjects = () => useQuery({ queryKey: ['projects'], queryFn: api.promptProjects, select: (d) => d.projects });
 export const useSearchIndexStatus = () =>
   useQuery({ queryKey: ['searchIndex'], queryFn: api.searchIndexStatus, refetchInterval: 4000 });

@@ -6,12 +6,15 @@ from pathlib import Path
 from ..adapters.base import (
     Adapter,
     AdapterIngestResult,
+    RawCommand,
     RawSegment,
     RawToolCall,
     native_session_id_for,
 )
+from ..commands.classify import classify
 from ..pricing.types import PricingTable
 from ..schema.types import (
+    Command,
     RawSessionHeader,
     RawTurnEvent,
     Session,
@@ -143,6 +146,14 @@ def _apply_result(
     # After the upsert, so a call and its error in the same tick both land.
     repo.mark_tool_calls_errored(session_id, result.tool_error_ids)
 
+    # The ledger mirrors the stored tool calls: a command gets a row when its call is stored
+    # under this session, by this tick or an earlier one. A fork copy whose call was dropped
+    # above has no such row and is left out (the session it was copied from owns it).
+    if result.commands:
+        stored = repo.existing_tool_call_ids([f"{session_id}:{c.tool_use_id}" for c in result.commands])
+        repo.upsert_commands([_to_command(c, session_id) for c in result.commands
+                              if f"{session_id}:{c.tool_use_id}" in stored])
+
     if result.segments and repo.is_search_indexing_enabled():
         repo.upsert_transcript_segments(
             [_to_segment(r, session_id) for r in result.segments]
@@ -159,6 +170,24 @@ def _to_tool_call(r: RawToolCall, session_id: str) -> ToolCall:
         input_size=r.input_size,
         subagent_type=r.subagent_type,
         timestamp=r.timestamp,
+    )
+
+
+def _to_command(r: RawCommand, session_id: str) -> Command:
+    """The one place a raw command becomes a stored one: masked, cleaned, capped, classified."""
+    rec = classify(r.command)
+    return Command(
+        id=f"{session_id}:{r.tool_use_id}",
+        session_id=session_id,
+        timestamp=r.timestamp,
+        shell=r.shell,
+        cwd=classify(r.cwd).text[:1024],     # a path is text from the transcript too
+        command=rec.text,
+        truncated=rec.truncated,
+        background=r.background,
+        severity=rec.severity,
+        risks=[{"rule": x.rule, "severity": x.severity} for x in rec.risks],
+        secrets=list(rec.secrets),
     )
 
 

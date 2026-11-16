@@ -91,6 +91,17 @@ after a schema/feature upgrade.
   (`_repair_session_durations_once`, from `run_first_pass_ingest`) recomputes
   `duration_sec`/`started_at_ms`/`ended_at_ms` from the stored ISO strings. The
   read-only dashboard under argusd never runs it.
+- **The command ledger mirrors the stored tool calls.** `_apply_result` gives a command
+  a row when its call is stored under the session (by this tick or an earlier one), so a
+  fork copy whose call was dropped gets none. The one-shot `backfill_commands_v1` fills
+  an archive from before migration 008: candidates come from
+  `sessions_missing_commands` (not a `computed_at` sweep, which passes over a session
+  the first tick already recomputed), with a `…_cursor` in `app_meta` so sessions that
+  can never be filled (a blank command has a call and never a row) don't crowd out the
+  rest under the cap.
+- **A re-read runs to the end of the file** (`_ingest_to_end`). An adapter reads a bounded
+  slice per call (Claude Code: 64 MiB); one call after a reset to 0 left the tail of a
+  larger transcript un-re-read. Two real transcripts over 64 MiB showed it.
 - **Bounded per run.** Backfill candidates are capped (`BACKFILL_CAP`, 200) per `argus start`;
   large installs may need several restarts to converge. If you add a new bounded
   sweep, surface what was deferred rather than silently truncating.

@@ -8,7 +8,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -445,6 +445,27 @@ def build_api(repo: Repository, deps: ApiDeps) -> APIRouter:
             "mcp_servers": mcp_servers,
             "subagents": subagents,
         }
+
+    @api.get("/api/commands")
+    def list_commands(
+        window: Literal["today", "7d", "30d", "all"] = "30d",
+        q: str = Query("", max_length=500),
+        severity: Literal["low", "medium", "high"] | None = None,
+        secrets: Literal["0", "1"] = "0",
+        session: str | None = Query(None, max_length=512),
+        project: str | None = Query(None, max_length=2048),
+        agent: str | None = Query(None, max_length=64),
+        limit: int = Query(100, ge=1, le=500),
+        offset: int = Query(0, ge=0, le=MAX_ROWS),
+    ) -> dict[str, Any]:
+        """The command ledger: what shell commands agents ran. Stored text is returned as
+        JSON strings and never interpreted; `severity` means "at least this severe"."""
+        since = _cutoff_iso_for_window(window)
+        items, total = repo.list_commands(
+            since_iso=since, q=q.strip(), severity=severity, secrets=secrets == "1",
+            session_id=session, project=project, agent=agent, limit=limit, offset=offset,
+        )
+        return {"items": items, "total": total, "counts": repo.command_counts(since_iso=since)}
 
     @api.get("/api/alerts")
     def list_alerts(limit: int = Query(50, ge=0, le=MAX_PAGE)) -> dict[str, Any]:

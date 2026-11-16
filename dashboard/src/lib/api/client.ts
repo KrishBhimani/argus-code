@@ -59,6 +59,16 @@ export const api = {
     if (p.roles?.length) sp.set('roles', p.roles.join(','));
     return get(`/api/search?${sp}`, S.SearchResponse);
   },
+  commands: (p: { window?: string; q?: string; severity?: string; secrets?: boolean; session?: string; limit?: number }) => {
+    const sp = new URLSearchParams();   // URLSearchParams encodes every value: nothing from the page reaches the URL raw
+    if (p.window) sp.set('window', p.window);
+    if (p.q) sp.set('q', p.q);
+    if (p.severity) sp.set('severity', p.severity);
+    if (p.secrets) sp.set('secrets', '1');
+    if (p.session) sp.set('session', p.session);
+    if (p.limit) sp.set('limit', String(p.limit));
+    return get(`/api/commands?${sp}`, S.CommandList);
+  },
   promptProjects: () => get('/api/prompts/projects', S.Projects),
   searchIndexStatus: () => get('/api/search-index/status', S.SearchIndexStatus),
   searchIndexEnable: () => post('/api/search-index/enable', z.unknown()),

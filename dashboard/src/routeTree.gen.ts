@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AlertsRouteImport } from './routes/alerts'
+import { Route as CommandsRouteImport } from './routes/commands'
 import { Route as ModelsRouteImport } from './routes/models'
 import { Route as PromptsRouteImport } from './routes/prompts'
 import { Route as SearchRouteImport } from './routes/search'
@@ -31,6 +32,11 @@ const IndexRoute = IndexRouteImport.update({
 const AlertsRoute = AlertsRouteImport.update({
   id: '/alerts',
   path: '/alerts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CommandsRoute = CommandsRouteImport.update({
+  id: '/commands',
+  path: '/commands',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ModelsRoute = ModelsRouteImport.update({
@@ -92,6 +98,7 @@ const SessionsIdRoute = SessionsIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/alerts': typeof AlertsRoute
+  '/commands': typeof CommandsRoute
   '/models': typeof ModelsRoute
   '/prompts': typeof PromptsRoute
   '/search': typeof SearchRoute
@@ -107,6 +114,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/alerts': typeof AlertsRoute
+  '/commands': typeof CommandsRoute
   '/models': typeof ModelsRoute
   '/prompts': typeof PromptsRoute
   '/search': typeof SearchRoute
@@ -123,6 +131,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/alerts': typeof AlertsRoute
+  '/commands': typeof CommandsRoute
   '/models': typeof ModelsRoute
   '/prompts': typeof PromptsRoute
   '/search': typeof SearchRoute
@@ -140,6 +149,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/alerts'
+    | '/commands'
     | '/models'
     | '/prompts'
     | '/search'
@@ -155,6 +165,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/alerts'
+    | '/commands'
     | '/models'
     | '/prompts'
     | '/search'
@@ -170,6 +181,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/alerts'
+    | '/commands'
     | '/models'
     | '/prompts'
     | '/search'
@@ -186,6 +198,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AlertsRoute: typeof AlertsRoute
+  CommandsRoute: typeof CommandsRoute
   ModelsRoute: typeof ModelsRoute
   PromptsRoute: typeof PromptsRoute
   SearchRoute: typeof SearchRoute
@@ -213,6 +226,13 @@ declare module '@tanstack/react-router' {
       path: '/alerts'
       fullPath: '/alerts'
       preLoaderRoute: typeof AlertsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/commands': {
+      id: '/commands'
+      path: '/commands'
+      fullPath: '/commands'
+      preLoaderRoute: typeof CommandsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/models': {
@@ -298,6 +318,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AlertsRoute: AlertsRoute,
+  CommandsRoute: CommandsRoute,
   ModelsRoute: ModelsRoute,
   PromptsRoute: PromptsRoute,
   SearchRoute: SearchRoute,

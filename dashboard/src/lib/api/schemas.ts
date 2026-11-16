@@ -126,6 +126,21 @@ export const Alert = z
 export type Alert = z.infer<typeof Alert>;
 export const AlertList = z.object({ alerts: z.array(Alert) });
 
+const CommandSeverity = z.enum(['low', 'medium', 'high']);
+export const CommandList = z.object({
+  items: z.array(z.object({
+    id: z.string(), session_id: z.string(), timestamp: z.string(), agent: z.string(), shell: z.string(),
+    cwd: z.string(), project_path: z.string(), command: z.string(),
+    truncated: z.boolean(), background: z.boolean(), failed: z.boolean(),
+    severity: CommandSeverity.nullable(),
+    risks: z.array(z.object({ rule: z.string(), severity: CommandSeverity })),
+    secrets: z.array(z.string()),
+  })),
+  total: z.number(),
+  counts: z.object({ total: z.number(), high: z.number(), medium: z.number(), low: z.number(), secrets: z.number() }),
+});
+export type CommandList = z.infer<typeof CommandList>;
+
 export const SubagentSummary = z
   .object({
     id: z.string(),

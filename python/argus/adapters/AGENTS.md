@@ -34,6 +34,10 @@ the collector keys sub-session ids and backfill lookups on it
 - **`extract_transcript_segments`** emits `RawSegment`s with roles `assistant`,
   `thinking`, `user`, and `tool_result`; each is byte-capped (`_cap_text`). The
   first `user` segment of a sub-agent is its "Task given" in the dashboard.
+- **Shell commands** (`extract_commands.py`): `Bash` and `PowerShell` tool_use blocks
+  with a non-empty string `command` become `RawCommand`s (raw, unmasked, in memory only;
+  the collector masks and stores). Anything else is skipped; its tool call still counts.
+  Codex: a `CommandExecution` item's `command` (argv joined, or a string) and `cwd`.
 - **`subagent_type` comes from the `Agent` tool (formerly `Task`).** Both names
   are recognised (`_SUBAGENT_TOOLS` in `extract_tool_calls.py`); rows ingested
   before the rename fix are re-read once by the collector's one-shot backfill

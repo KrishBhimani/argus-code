@@ -191,3 +191,27 @@ CREATE INDEX IF NOT EXISTS idx_segments_tool_use ON transcript_segments(session_
 MIGRATION_007 = """
 CREATE INDEX IF NOT EXISTS idx_turns_message ON turns(substr(id, length(session_id) + 2));
 """
+
+# The command ledger: the shell commands agents ran. One row per shell tool call, keyed
+# by that call's id and removed with it (fork de-duplication, a wiped session). `command`
+# is masked, cleaned and capped by `argus.commands.classify` before it gets here; `risks`
+# and `secrets` are JSON lists. Whether the command failed stays on tool_calls.is_error.
+# CREATE ... IF NOT EXISTS: idempotent, non-destructive.
+MIGRATION_008 = """
+CREATE TABLE IF NOT EXISTS commands (
+  id TEXT PRIMARY KEY REFERENCES tool_calls(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  timestamp TEXT NOT NULL,
+  shell TEXT NOT NULL,
+  cwd TEXT NOT NULL DEFAULT '',
+  command TEXT NOT NULL,
+  truncated INTEGER NOT NULL DEFAULT 0,
+  background INTEGER NOT NULL DEFAULT 0,
+  severity TEXT,
+  risks TEXT NOT NULL DEFAULT '[]',
+  secrets TEXT NOT NULL DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS idx_commands_session ON commands(session_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_commands_time ON commands(timestamp);
+CREATE INDEX IF NOT EXISTS idx_commands_flagged ON commands(timestamp) WHERE severity IS NOT NULL OR secrets != '[]';
+"""
