@@ -58,8 +58,20 @@ This doc owns backend-wide rules and the subsystems that have no child doc:
   path, edit count, first and last time), sub-agent edits rolled up to the session that
   started them. It reads the transcripts with its own offsets (`file_offsets` keys
   prefixed `edits:`), so it never moves the facts pass's place and backfills on a
-  `work.db` made before it. Attempted edits count; shell-only changes are not seen;
+  `work.db` made before it. Attempted edits count;
   sessions whose transcript is already deleted have no rows and keep the older rules.
+  **Files changed through the shell** (`session_shell_files`, same shape, own offsets
+  prefixed `shell:`): Claude Code 2.1.28+ attaches `bashEditDiff` to a Bash result, and
+  its `changedFiles` is the whole list of files that command changed. Only the paths
+  are kept, never the diff. A result without the list (`shared`, `unavailable`) claims
+  nothing; PowerShell results and older Claude Code versions carry no such list, so
+  shell-only changes there are still not seen. These files count wherever "did it
+  change this file" is asked (where a session belongs, `files` commit evidence, a
+  thread's `files_edited`, the read-only test for timing links) and a file changed by a
+  tool and by the shell counts once. They are **left out of thread grouping**: any
+  session that rebuilds touches the same build output, and sharing it is not sharing
+  work. `gitOperation` on results is not read: it is on too few commits to help, and
+  the commit hash in the command's output already gives `exact` links.
   Two things are derived from it. *Where a session belongs* (`collector._assign_by_edits`,
   for sessions with new lines): the project with the most edited files, counted across
   its folders, then that project's folder with the most; the starting folder wins a tie;

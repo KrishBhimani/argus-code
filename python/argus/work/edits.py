@@ -25,6 +25,10 @@ EDIT_TOOLS = {"Edit": "file_path", "Write": "file_path", "MultiEdit": "file_path
 # The facts pass keeps its place per transcript under the bare path; this pass keeps its own,
 # so a work.db that already read every transcript for facts still reads them here.
 OFFSET_PREFIX = "edits:"
+# Files a shell command changed are a second record with its own place in each transcript:
+# a work.db that already read its transcripts for edits is filled in from the start, and
+# neither record is counted twice.
+SHELL_OFFSET_PREFIX = "shell:"
 _ABSOLUTE = re.compile(r"^(?:[A-Za-z]:[\\/]|[\\/])")
 
 
@@ -63,9 +67,35 @@ def _apply(conn: sqlite3.Connection, sid: str, lines: list[dict]) -> int:
     return n
 
 
+def _apply_shell(conn: sqlite3.Connection, sid: str, lines: list[dict]) -> int:
+    """Files a shell command changed. Claude Code (2.1.28 and later) attaches `bashEditDiff`
+    to a Bash result; its `changedFiles` is the whole list, where `files` holds detail for
+    only the first few. A result without the list (`shared`, `unavailable`) claims nothing.
+    Only the paths are kept, never the diff."""
+    n = 0
+    for o in lines:
+        result = o.get("toolUseResult")
+        diff = result.get("bashEditDiff") if isinstance(result, dict) else None
+        changed = diff.get("changedFiles") if isinstance(diff, dict) else None
+        ts = o.get("timestamp")
+        if not isinstance(changed, list) or not ts or _ms(ts) is None:
+            continue
+        for raw in changed:
+            path = edited_path(raw, o.get("cwd"))
+            if path is None:
+                continue
+            conn.execute(
+                """INSERT INTO session_shell_files (session_id, path, changes, first_ts, last_ts) VALUES (?, ?, 1, ?, ?)
+                   ON CONFLICT(session_id, path) DO UPDATE SET changes = changes + 1,
+                     first_ts = MIN(first_ts, excluded.first_ts), last_ts = MAX(last_ts, excluded.last_ts)""",
+                (sid, path, ts, ts))
+            n += 1
+    return n
+
+
 def collect_edits(conn: sqlite3.Connection, adapter) -> set[str]:
-    """Read new transcript lines for file edits. Returns the sessions that gained any.
-    A sub-agent's edits belong to the session that started it."""
+    """Read new transcript lines for file edits and for files changed through the shell.
+    Returns the sessions that gained any. A sub-agent's belong to the session that started it."""
     touched: set[str] = set()
     conn.execute("DELETE FROM meta WHERE key = 'edits_error'")  # reset per pass
     for f in adapter.discover_session_files():
@@ -79,6 +109,9 @@ def collect_edits(conn: sqlite3.Connection, adapter) -> set[str]:
             try:
                 lines = read_new_lines(conn, path, key=OFFSET_PREFIX + str(path))
                 if lines and _apply(conn, sid, lines):
+                    touched.add(sid)
+                lines = read_new_lines(conn, path, key=SHELL_OFFSET_PREFIX + str(path))
+                if lines and _apply_shell(conn, sid, lines):
                     touched.add(sid)
                 conn.execute("COMMIT")
             except Exception as e:  # noqa: BLE001  one bad file must not stop the others

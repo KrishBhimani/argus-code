@@ -176,11 +176,17 @@ def _assign_by_edits(conn, sids: set[str]) -> None:
             continue
         files: dict[int, int] = {}
         edits: dict[int, int] = {}
-        for f in conn.execute("SELECT path, edits FROM session_files WHERE session_id = ?", (sid,)):
-            rid = _repo_of(conn, str(Path(f["path"]).parent), known, seen)
+        # A file counts once whether an edit tool, a shell command or both changed it.
+        changed: dict[str, int] = {}
+        for f in conn.execute(
+                """SELECT path, edits AS n FROM session_files WHERE session_id = ?
+                   UNION ALL SELECT path, changes FROM session_shell_files WHERE session_id = ?""", (sid, sid)):
+            changed[f["path"]] = changed.get(f["path"], 0) + f["n"]
+        for path, count in changed.items():
+            rid = _repo_of(conn, str(Path(path).parent), known, seen)
             if rid is not None:
                 files[rid] = files.get(rid, 0) + 1
-                edits[rid] = edits.get(rid, 0) + f["edits"]
+                edits[rid] = edits.get(rid, 0) + count
         if not files:
             continue
         home = _repo_of(conn, where["cwd"], known, seen) if where["cwd"] else None

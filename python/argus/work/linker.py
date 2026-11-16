@@ -48,9 +48,16 @@ def _edits_by_file(conn: sqlite3.Connection, repo_id: int, sessions: list[str]) 
     prefix = normalize_project_path(row["root"]) + "/"
     out: dict[str, list[tuple[str, float, float]]] = {}
     for sid in sessions:
-        for f in conn.execute("SELECT path, first_ts, last_ts FROM session_files WHERE session_id = ?", (sid,)):
+        spans: dict[str, tuple[float, float]] = {}     # a file changed by a tool and by the shell is one span
+        for f in conn.execute(
+                """SELECT path, first_ts, last_ts FROM session_files WHERE session_id = ?
+                   UNION ALL SELECT path, first_ts, last_ts FROM session_shell_files WHERE session_id = ?""", (sid, sid)):
             if f["path"].startswith(prefix):
-                out.setdefault(f["path"][len(prefix):], []).append((sid, _ms(f["first_ts"]), _ms(f["last_ts"])))
+                a, b = _ms(f["first_ts"]), _ms(f["last_ts"])
+                old = spans.get(f["path"])
+                spans[f["path"]] = (a, b) if old is None else (min(old[0], a), max(old[1], b))
+        for path, (a, b) in spans.items():
+            out.setdefault(path[len(prefix):], []).append((sid, a, b))
     return out
 
 
@@ -73,11 +80,12 @@ def link_repo(conn: sqlite3.Connection, repo_id: int) -> dict[str, int]:
                                   (repo_id, claim["short_sha"] + "%")):
                 offer(c["sha"], sid, "exact", 0.0)
     edits = _edits_by_file(conn, repo_id, sessions)
-    # Sessions read for edits that used no edit tool at all: they asked, read or reviewed.
+    # Sessions read for edits that changed no file, by a tool or the shell: they asked, read or reviewed.
     # The user committing something within 30 minutes of one is a coincidence, not its work.
     read_only = {r["session_id"] for r in conn.execute(
         """SELECT session_id FROM edits_seen e
-           WHERE NOT EXISTS (SELECT 1 FROM session_files f WHERE f.session_id = e.session_id)""")} & set(sessions)
+           WHERE NOT EXISTS (SELECT 1 FROM session_files f WHERE f.session_id = e.session_id)
+             AND NOT EXISTS (SELECT 1 FROM session_shell_files f WHERE f.session_id = e.session_id)""")} & set(sessions)
     # Commits no ref reaches any more (as of the last scan): a stash entry an older scan stored
     # has two parents like a merge, and must not pass for one.
     gone = {r["sha"] for r in conn.execute("SELECT sha FROM commit_reach WHERE repo_id = ? AND reachable = 0", (repo_id,))}

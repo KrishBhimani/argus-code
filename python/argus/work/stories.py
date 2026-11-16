@@ -26,6 +26,9 @@ class SessionSummary:
     # Project files the session edited, as paths inside the repo. Empty = it edited none;
     # None = no record (its transcript was gone before the file-edit record existed).
     files: frozenset[str] | None = None
+    # Project files it changed through shell commands. They count as work done, but never
+    # join threads: every session that rebuilds touches the same build output.
+    shell_files: frozenset[str] = frozenset()
 
 
 def _t(ts: str) -> float:
@@ -45,7 +48,7 @@ def _whole(group: list[SessionSummary]) -> dict | None:
 def _files_edited(group: list[SessionSummary]) -> int | None:
     """How many project files the thread edited; None when that can't be said (a session
     without a record might have edited some)."""
-    edited = len(frozenset().union(*(s.files for s in group if s.files is not None)))
+    edited = len(frozenset().union(*(s.files | s.shell_files for s in group if s.files is not None)))
     return None if not edited and any(s.files is None for s in group) else edited
 
 
