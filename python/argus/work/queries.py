@@ -278,17 +278,19 @@ def _whole(conn, sid: str, frm: str, to: str, s: sqlite3.Row | None) -> dict | N
     return {"first_ts": w["a"], "last_ts": w["b"], "output_tokens": w["o"] or 0, "cost": w["c"] or 0.0}
 
 
-def _project_files(conn, rids: list[int], sids: list[str]) -> dict[str, frozenset[str]]:
+def _project_files(conn, rids: list[int], sids: list[str], table: str = "session_files") -> dict[str, frozenset[str]]:
     """Per session with a file-edit record: the files it edited inside this project, as paths
     within the repo (so a worktree and the main checkout name a file the same way).
-    A session missing from the result has no record at all."""
+    A session missing from the result has no record at all. `table` picks the record:
+    edit tools (`session_files`) or shell commands (`session_shell_files`)."""
+    assert table in ("session_files", "session_shell_files")
     if not sids:
         return {}
     roots = sorted((normalize_project_path(r["root"]) + "/" for r in conn.execute(
         f"SELECT root FROM repos WHERE id IN ({_in(rids)})", rids)), key=len, reverse=True)   # a nested folder first
     out: dict[str, set[str]] = {r["session_id"]: set() for r in conn.execute(
         f"SELECT session_id FROM edits_seen WHERE session_id IN ({_in(sids)})", sids)}
-    for f in conn.execute(f"SELECT session_id, path FROM session_files WHERE session_id IN ({_in(sids)})", sids):
+    for f in conn.execute(f"SELECT session_id, path FROM {table} WHERE session_id IN ({_in(sids)})", sids):
         root = next((r for r in roots if f["path"].startswith(r)), None)
         if root:
             out.setdefault(f["session_id"], set()).add(f["path"][len(root):])
@@ -348,6 +350,7 @@ def _summaries(conn, rids, ids, frm, to, scope, scan: _Scan | None = None,
                  "landed": c["landed"]})
     sids = list(by_sid)
     files = _project_files(conn, rids, sids)
+    shell_files = _project_files(conn, rids, sids, "session_shell_files")
     # One query per kind of fact, not per session: a busy project has hundreds of sessions.
     titles = _by_session(conn, "SELECT session_id, title FROM session_facts WHERE session_id IN ({ids})", sids)
     wheres = _by_session(conn, "SELECT session_id, git_branch, repo_id FROM session_repo WHERE session_id IN ({ids})", sids)
@@ -367,7 +370,8 @@ def _summaries(conn, rids, ids, frm, to, scope, scan: _Scan | None = None,
                                   commits_by_sid.get(sid, []), sid in estimated,
                                   sum(t["output_tokens"] or 0 for t in ts), _whole(conn, sid, frm, to, core.get(sid)),
                                   core[sid]["primary_model"] if sid in core else None,
-                                  repo_id=where["repo_id"], files=files.get(sid)))
+                                  repo_id=where["repo_id"], files=files.get(sid),
+                                  shell_files=shell_files.get(sid, frozenset())))
     return out
 
 
